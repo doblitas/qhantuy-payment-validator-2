@@ -1,0 +1,64 @@
+api_version = "2025-01"
+
+[[extensions]]
+uid = "85c46207-0627-facd-fc76-9b4baf21974fdb60bfd6"
+type = "ui_extension"
+name = "Qhantuy QR Payment Validator"
+handle = "qhantuy-qr-validator"
+
+[[extensions.targeting]]
+target = "purchase.thank-you.block.render"
+module = "./src/ThankYouExtension.jsx"
+
+[[extensions.targeting]]
+target = "customer-account.order-status.block.render"
+module = "./src/OrderStatusExtension.jsx"
+
+[extensions.capabilities]
+network_access = true
+api_access = true
+
+[extensions.settings]
+
+  [[extensions.settings.fields]]
+  key = "qhantuy_api_url"
+  type = "single_line_text_field"
+  name = "Qhantuy API URL"
+  description = "URL del API de Qhantuy"
+  
+  [[extensions.settings.fields]]
+  key = "qhantuy_api_token"
+  type = "single_line_text_field"
+  name = "Qhantuy API Token"
+  description = "Token de autenticación"
+  
+  [[extensions.settings.fields]]
+  key = "qhantuy_appkey"
+  type = "single_line_text_field"
+  name = "Qhantuy AppKey"
+  description = "Clave de 64 caracteres"
+  
+  [[extensions.settings.fields]]
+  key = "payment_gateway_name"
+  type = "single_line_text_field"
+  name = "Nombre del Método de Pago"
+  description = "Nombre exacto del método de pago manual"
+  
+  [[extensions.settings.fields]]
+  key = "check_interval"
+  type = "number_integer"
+  name = "Intervalo de verificación (segundos)"
+  description = "Cada cuántos segundos verificar (default: 5)"
+  
+  [[extensions.settings.fields]]
+  key = "max_check_duration"
+  type = "number_integer"
+  name = "Duración máxima (minutos)"
+  description = "Tiempo máximo de verificación (default: 30)"
+  
+  [[extensions.settings.fields]]
+  key = "backend_api_url"
+  type = "single_line_text_field"
+  name = "Backend API URL"
+  description = "URL completa del backend de la aplicación (ej: https://tu-app.herokuapp.com)"
+  default = "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app"

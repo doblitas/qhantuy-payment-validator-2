@@ -1,0 +1,36 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "qhantuy-payment-validator-1"
+client_id = "ea21fdd4c8cd62a5590a71a641429cd4"
+application_url = "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app"
+embedded = true
+
+[access_scopes]
+# Required scopes for order access and checkout customization
+scopes = "read_orders,write_orders,read_checkouts"
+
+[auth]
+redirect_urls = [
+  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/auth/callback",
+  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/api/auth/callback",
+  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/auth/shopify/callback",
+  "http://localhost:3000/auth/callback"
+]
+
+[webhooks]
+api_version = "2025-01"
+
+[[webhooks.subscriptions]]
+topics = ["orders/create"]
+uri = "/api/webhooks/orders/create"
+
+[[webhooks.subscriptions]]
+topics = ["orders/updated"]
+uri = "/api/webhooks/orders/updated"
+
+[pos]
+embedded = false
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "tupropiapp-2.myshopify.com"

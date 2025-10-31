@@ -1,0 +1,133 @@
+{
+	"info": {
+		"_postman_id": "4443562d-1cea-414c-8127-ca1acd1ac326",
+		"name": "Qpos-Shopify",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "15214899"
+	},
+	"item": [
+		{
+			"name": "Checkout QR",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-API-Token",
+						"value": "{{X-API-Token}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"appkey\": \"{{appkey}}\",\r\n    \"customer_email\": \"cliente@example.com\",\r\n    \"customer_first_name\": \"Leandro\",\r\n    \"customer_last_name\": \"Poma\",\r\n    \"currency_code\": \"BOB\",\r\n    \"internal_code\": \"SHOPIFY-ORDER-#1054\",\r\n    \"payment_method\": \"QRSIMPLE\",\r\n    \"image_method\": \"URL\",\r\n    \"detail\": \"Compra desde Shopify: Polera blanca x2, Gorra azul x1\",\r\n    \"callback_url\": \"https://mitienda.myshopify.com/callback\",\r\n    \"return_url\": \"https://mitienda.myshopify.com/pages/thank-you\",\r\n    \"items\": [\r\n        {\r\n            \"name\": \"Polera blanca\",\r\n            \"quantity\": 2,\r\n            \"price\": 70.00\r\n        },\r\n        {\r\n            \"name\": \"Gorra azul\",\r\n            \"quantity\": 1,\r\n            \"price\": 45.00\r\n        }\r\n    ]\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{api_url}}/v2/checkout",
+					"host": [
+						"{{api_url}}"
+					],
+					"path": [
+						"v2",
+						"checkout"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Simular el pago del QR",
+			"request": {
+				"auth": {
+					"type": "basic",
+					"basic": [
+						{
+							"key": "password",
+							"value": "{{bcp_password}}",
+							"type": "string"
+						},
+						{
+							"key": "username",
+							"value": "{{bcp_username}}",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [
+					{
+						"key": "php-auth-user",
+						"value": "{{bcp_username}}",
+						"type": "text"
+					},
+					{
+						"key": "php-auth-pw",
+						"value": "{{bcp_password}}",
+						"type": "text"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"transactionID\": \"22682\" /* transaction_id generado en el checkout del QR */\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "{{api_url}}/test-callback",
+					"host": [
+						"{{api_url}}"
+					],
+					"path": [
+						"test-callback"
+					]
+				}
+			},
+			"response": []
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"packages": {},
+				"requests": {},
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "X-API-Token",
+			"value": ""
+		},
+		{
+			"key": "api_url",
+			"value": ""
+		},
+		{
+			"key": "appkey",
+			"value": ""
+		}
+	]
+}

@@ -1,0 +1,12 @@
+node_modules
+extensions
+.git
+.env
+.env.local
+*.log
+shopify.app.toml
+shopify.extension.toml
+
+# Servidor Express solo para desarrollo local
+web/backend/index.js
+

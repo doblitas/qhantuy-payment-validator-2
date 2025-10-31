@@ -1,0 +1,49 @@
+{
+  "name": "qhantuy-payment-validator",
+  "version": "1.0.0",
+  "description": "Shopify thank you page extension for Qhantuy QR payment validation",
+  "main": "web/backend/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "dev": "shopify app dev",
+    "dev:backend": "node web/backend/index.js",
+    "build": "shopify app build",
+    "deploy": "shopify app deploy",
+    "generate": "shopify app generate",
+    "generate:extension": "shopify app generate extension",
+    "start": "NODE_ENV=production node web/backend/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "shopify",
+    "qhantuy",
+    "payment",
+    "qr",
+    "validation",
+    "bolivia",
+    "checkout",
+    "extension"
+  ],
+  "author": "tupropiapp",
+  "license": "MIT",
+  "dependencies": {
+    "@preact/signals": "^2.3.2",
+    "@shopify/app": "^3.58.0",
+    "@shopify/cli": "^3.58.0",
+    "@shopify/shopify-api": "^9.0.0",
+    "@shopify/ui-extensions": "^2025.1.0",
+    "@shopify/ui-extensions-react": "^2025.1.0",
+    "@vercel/kv": "^1.0.0",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
+    "preact": "^10.27.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "nodemon": "^3.0.1"
+  }
+}

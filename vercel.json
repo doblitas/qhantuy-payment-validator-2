@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "functions": {
+    "api/**/*.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/qhantuy/check-debt",
+      "destination": "/api/qhantuy/check-debt.js"
+    },
+    {
+      "source": "/api/orders/confirm-payment",
+      "destination": "/api/orders/confirm-payment.js"
+    },
+    {
+      "source": "/api/qhantuy/callback",
+      "destination": "/api/qhantuy/callback.js"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/health.js"
+    },
+    {
+      "source": "/api/verify",
+      "destination": "/api/verify.js"
+    },
+    {
+      "source": "/auth/callback",
+      "destination": "/api/auth-callback.js"
+    },
+    {
+      "source": "/auth",
+      "destination": "/api/auth.js"
+    },
+    {
+      "source": "/api/auth",
+      "destination": "/api/auth.js"
+    },
+    {
+      "source": "/api/auth/callback",
+      "destination": "/api/auth-callback.js"
+    }
+  ]
+}
+
