@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "shopify app dev",
     "dev:backend": "node web/backend/index.js",
-    "build": "shopify app build",
+    "build": "echo 'No build needed for Vercel serverless functions'",
+    "build:shopify": "shopify app build",
     "deploy": "shopify app deploy",
     "generate": "shopify app generate",
     "generate:extension": "shopify app generate extension",
