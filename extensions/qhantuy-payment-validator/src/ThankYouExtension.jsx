@@ -48,6 +48,8 @@ function QhantuPaymentValidatorThankYou() {
   const [transactionId, setTransactionId] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [isChecking, setIsChecking] = useState(false);
+  const [pollingStopped, setPollingStopped] = useState(false);
+  const [pollingStartTime, setPollingStartTime] = useState(null);
   
   // Refs para controlar reintentos y timeouts sin causar re-renders
   const retryTimeoutRef = useRef(null);
@@ -1115,10 +1117,16 @@ function QhantuPaymentValidatorThankYou() {
         return;
       }
       
-      // Priorizar orderNumber sobre orderId para mantener consistencia
-      // Esto asegura que ambas páginas usen el mismo formato
+      // IMPORTANTE: Priorizar orderNumber sobre orderId para mantener consistencia
+      // Esto asegura que ambas páginas (ThankYou y OrderStatus) usen el mismo formato
+      // El internal_code debe ser consistente en todas las llamadas
       const formattedInternalCode = orderNumber ? `SHOPIFY-ORDER-${orderNumber}` : `SHOPIFY-ORDER-${orderId}`;
-      console.log('🔍 Consultando CONSULTA DEUDA con internal_code:', formattedInternalCode);
+      console.log('🔍 Consultando CONSULTA DEUDA con internal_code:', formattedInternalCode, {
+        orderNumber,
+        orderId,
+        usingOrderNumber: !!orderNumber,
+        consistent: '✅ Using orderNumber first for consistency'
+      });
       
       // Usar el backend para evitar problemas de CORS
       // El backend hace la llamada a la API de Qhantuy
@@ -1238,35 +1246,69 @@ function QhantuPaymentValidatorThankYou() {
   }, [transactionId, apiUrl, apiToken, appkey, storage, isChecking, getOrderIdentifiers, shop]);
   
   // Polling automático: verificar el estado del pago cada X segundos cuando está pendiente
+  // Se detiene automáticamente después de 2 minutos para evitar verificaciones excesivas
   useEffect(() => {
     // Solo hacer polling si:
     // 1. El estado es 'pending' (pago pendiente)
     // 2. Tenemos un transactionId
     // 3. No estamos verificando actualmente
-    if (paymentStatus !== 'pending' || !transactionId || isChecking) {
+    // 4. El polling no ha sido detenido
+    if (paymentStatus !== 'pending' || !transactionId || isChecking || pollingStopped) {
       return;
     }
 
+    // Tiempo máximo de polling automático: 2 minutos (120 segundos)
+    const AUTO_POLLING_MAX_DURATION = 2 * 60 * 1000; // 2 minutos en milisegundos
+
+    // Guardar tiempo de inicio si es la primera vez
+    if (!pollingStartTime) {
+      setPollingStartTime(Date.now());
+    }
+
     console.log('🔄 Iniciando polling automático para verificar pago cada', checkInterval / 1000, 'segundos');
+    console.log('⏱️ El polling automático se detendrá después de 2 minutos para solicitar verificación manual');
+
+    let pollingAttempts = 0;
+    const maxAttempts = Math.floor(AUTO_POLLING_MAX_DURATION / checkInterval);
 
     // Crear intervalo de verificación
     const pollingInterval = setInterval(() => {
-      console.log('🔄 Polling automático: verificando estado del pago...');
+      pollingAttempts++;
+      const elapsed = Date.now() - (pollingStartTime || Date.now());
+      
+      // Detener si hemos alcanzado el tiempo máximo (2 minutos)
+      if (elapsed >= AUTO_POLLING_MAX_DURATION || pollingAttempts >= maxAttempts) {
+        console.log('⏱️ Tiempo máximo de polling automático alcanzado (2 minutos). Cambiando a verificación manual.');
+        clearInterval(pollingInterval);
+        setPollingStopped(true);
+        return;
+      }
+
+      console.log(`🔄 Polling automático (${pollingAttempts}/${maxAttempts}): verificando estado del pago...`);
       checkPaymentStatus();
     }, checkInterval);
 
-    // Timeout máximo: dejar de verificar después de maxCheckDuration
+    // Timeout máximo: dejar de verificar después de AUTO_POLLING_MAX_DURATION
     const maxTimeout = setTimeout(() => {
-      console.log('⏱️ Tiempo máximo de verificación alcanzado');
+      console.log('⏱️ Tiempo máximo de polling automático alcanzado (2 minutos). Cambiando a verificación manual.');
       clearInterval(pollingInterval);
-    }, maxCheckDuration);
+      setPollingStopped(true);
+    }, AUTO_POLLING_MAX_DURATION);
 
     // Cleanup al desmontar o cambiar estado
     return () => {
       clearInterval(pollingInterval);
       clearTimeout(maxTimeout);
     };
-  }, [paymentStatus, transactionId, isChecking, checkInterval, maxCheckDuration, checkPaymentStatus]);
+  }, [paymentStatus, transactionId, isChecking, checkInterval, pollingStopped, pollingStartTime, checkPaymentStatus]);
+
+  // Resetear polling cuando el estado cambia de 'pending'
+  useEffect(() => {
+    if (paymentStatus !== 'pending') {
+      setPollingStopped(false);
+      setPollingStartTime(null);
+    }
+  }, [paymentStatus]);
   
   // No mostrar si no es pago manual
   const shouldShow = !!paymentGatewayName;
@@ -1369,6 +1411,11 @@ function QhantuPaymentValidatorThankYou() {
               <Text>
                 Escanea el código QR con tu aplicación bancaria y completa el pago.
               </Text>
+              {pollingStopped && (
+                <Text size="small" appearance="subdued" style={{ marginTop: 8 }}>
+                  ⚠️ La verificación automática se detuvo después de 2 minutos. Usa el botón para verificar manualmente.
+                </Text>
+              )}
             </BlockStack>
           </Banner>
 
@@ -1393,23 +1440,49 @@ function QhantuPaymentValidatorThankYou() {
               <Text size="small">
                 • Método de pago: {paymentGatewayName}
               </Text>
+              {pollingStopped && (
+                <Text size="small" appearance="subdued" style={{ marginTop: 8 }}>
+                  • Estado: Verificación automática detenida - Requiere verificación manual
+                </Text>
+              )}
             </BlockStack>
           </Banner>
 
-          <Button onPress={checkPaymentStatus} disabled={isChecking}>
-            {isChecking ? '🔄 Verificando...' : '🔄 Verificar Pago'}
-          </Button>
+          {pollingStopped ? (
+            <>
+              <Banner status="warning">
+                <BlockStack spacing="tight">
+                  <Text emphasis="bold">⏱️ Verificación Automática Detenida</Text>
+                  <Text size="small">
+                    La verificación automática se detuvo después de 2 minutos para evitar consultas excesivas.
+                  </Text>
+                  <Text size="small">
+                    Si ya completaste el pago, haz clic en el botón de abajo para verificar manualmente.
+                  </Text>
+                </BlockStack>
+              </Banner>
+              <Button onPress={checkPaymentStatus} disabled={isChecking}>
+                {isChecking ? '🔄 Verificando Manualmente...' : '🔍 Verificar Pago Manualmente'}
+              </Button>
+            </>
+          ) : (
+            <Button onPress={checkPaymentStatus} disabled={isChecking}>
+              {isChecking ? '🔄 Verificando...' : '🔄 Verificar Pago'}
+            </Button>
+          )}
 
-          <Banner status="info">
-            <BlockStack spacing="tight">
-              <Text size="small">
-                💡 Después de pagar, haz clic en "Verificar Pago" para confirmar.
-              </Text>
-              <Text size="small">
-                Puedes cerrar esta página y volver más tarde para verificar.
-              </Text>
-            </BlockStack>
-          </Banner>
+          {!pollingStopped && (
+            <Banner status="info">
+              <BlockStack spacing="tight">
+                <Text size="small">
+                  💡 La verificación automática está activa. Se detendrá después de 2 minutos.
+                </Text>
+                <Text size="small">
+                  Puedes cerrar esta página y volver más tarde para verificar.
+                </Text>
+              </BlockStack>
+            </Banner>
+          )}
         </>
       )}
       
