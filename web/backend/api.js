@@ -24,17 +24,45 @@ export async function handleQhantuCallback(req, res) {
       transaction_id,
       profile_code,
       message,
-      internal_code, // This is the Shopify order ID
+      internal_code, // This is the Shopify order ID (SHOPIFY-ORDER-{number})
       checkout_amount,
       checkout_currency_code,
       status
     } = req.query;
 
     // Validate required parameters
-    if (!transaction_id || !internal_code || !status) {
+    // Para test-callback, internal_code puede venir después si tenemos transaction_id
+    if (!transaction_id || !status) {
       return res.status(400).json({
         success: false,
-        message: 'Missing required parameters'
+        message: 'Missing required parameters: transaction_id and status are required',
+        received: {
+          transaction_id: !!transaction_id,
+          status: !!status,
+          internal_code: !!internal_code
+        }
+      });
+    }
+
+    // Si no tenemos internal_code pero tenemos transaction_id, intentar buscarlo
+    // Esto es útil para test-callbacks donde solo viene el transactionID
+    if (!internal_code && transaction_id) {
+      console.log('⚠️  internal_code not provided. Transaction ID:', transaction_id);
+      console.log('ℹ️  Tip: Include internal_code parameter in callback URL or body');
+      console.log('    Format: /api/qhantuy/callback?transaction_id=XXX&internal_code=SHOPIFY-ORDER-XXX&status=success');
+      
+      // Intentar extraer desde shop domain si está disponible
+      const shopDomain = req.query.shop || req.headers['x-shopify-shop-domain'];
+      if (shopDomain) {
+        console.log('ℹ️  Shop domain available:', shopDomain);
+        // Nota: Necesitaríamos buscar el pedido por transaction_id, pero eso requiere
+        // mantener un registro de transaction_id -> order_id. Por ahora, requerimos internal_code.
+      }
+      
+      return res.status(400).json({
+        success: false,
+        message: 'internal_code is required. Format: SHOPIFY-ORDER-{order_number}',
+        example: `/api/qhantuy/callback?transaction_id=${transaction_id}&internal_code=SHOPIFY-ORDER-1001&status=success&shop=your-store.myshopify.com`
       });
     }
 
