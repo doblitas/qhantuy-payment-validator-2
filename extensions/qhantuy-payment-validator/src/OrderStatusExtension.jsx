@@ -1186,38 +1186,75 @@ function QhantuPaymentValidatorOrderStatus() {
     setIsChecking(true);
     
     try {
-      // Usar el servicio 3 - CONSULTA DEUDA según documentación Qhantuy
-      // Este servicio consulta por internal_code (código interno del pedido)
       const { number: orderNumber, id: orderId } = getOrderIdentifiers();
       
       // Validar que tenemos al menos un identificador
       if (!orderNumber && !orderId) {
         console.error('❌ No se puede verificar pago: faltan identificadores de orden (OrderStatus)');
         setErrorMessage('Error: No se pudo obtener el número de orden');
+        setIsChecking(false);
         return;
       }
       
+      const shopDomain = shop?.myshopifyDomain || shop?.domain;
+      const backendApiUrl = formattedSettings.backendApiUrl;
+      
+      // PASO 1: Simular el callback de Qhantuy usando test-callback endpoint
+      // Esto simula que Qhantuy confirmó el pago
+      console.log('🔍 PASO 1: Simulando callback de Qhantuy con transaction_id (OrderStatus):', transactionId);
+      
+      const testCallbackUrl = `${formattedSettings.apiUrl.replace(/\/$/, '')}/test-callback`;
+      console.log('Calling test-callback endpoint (OrderStatus):', testCallbackUrl);
+      
+      let testCallbackResponse;
+      try {
+        testCallbackResponse = await fetch(testCallbackUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Token': formattedSettings.apiToken || ''
+          },
+          body: JSON.stringify({
+            transactionID: transactionId.toString()
+          })
+        });
+        
+        if (!testCallbackResponse.ok) {
+          throw new Error(`Test-callback failed: ${testCallbackResponse.status} ${testCallbackResponse.statusText}`);
+        }
+        
+        const testCallbackData = await testCallbackResponse.json();
+        console.log('✅ Test-callback response (OrderStatus):', testCallbackData);
+        
+        // Verificar que el pago fue exitoso (State: "000")
+        if (testCallbackData.State !== '000') {
+          console.warn('⚠️ Test-callback indicates payment not completed (OrderStatus):', testCallbackData.Message);
+          setErrorMessage(`Pago no completado: ${testCallbackData.Message || 'Estado desconocido'}`);
+          setIsChecking(false);
+          return;
+        }
+        
+        console.log('✅ Test-callback confirmó pago exitoso (OrderStatus) (State: 000)');
+        
+      } catch (testCallbackError) {
+        console.error('❌ Error calling test-callback (OrderStatus):', testCallbackError);
+        // Continuar con consulta de deuda aunque falle test-callback (fallback)
+        console.log('ℹ️ Continuando con consulta de deuda como fallback (OrderStatus)...');
+      }
+      
+      // PASO 2: Usar el servicio 3 - CONSULTA DEUDA para obtener detalles completos
       // IMPORTANTE: Priorizar orderNumber sobre orderId para mantener consistencia
-      // Esto asegura que ambas páginas (ThankYou y OrderStatus) usen el mismo formato
-      // El internal_code debe ser consistente en todas las llamadas
       const formattedInternalCode = orderNumber ? `SHOPIFY-ORDER-${orderNumber}` : `SHOPIFY-ORDER-${orderId}`;
-      console.log('🔍 Consultando CONSULTA DEUDA con internal_code (OrderStatus):', formattedInternalCode, {
+      console.log('🔍 PASO 2: Consultando CONSULTA DEUDA con internal_code (OrderStatus):', formattedInternalCode, {
         orderNumber,
         orderId,
         usingOrderNumber: !!orderNumber,
         consistent: '✅ Using orderNumber first for consistency (matching ThankYouExtension)'
       });
       
-      // Usar el backend para evitar problemas de CORS
-      // El backend hace la llamada a la API de Qhantuy
-      const shopDomain = shop?.myshopifyDomain || shop?.domain;
-      
-      // Usar backendApiUrl de formattedSettings (ya sincronizado)
-      const backendApiUrl = formattedSettings.backendApiUrl;
-      
       // Construir la URL completa del endpoint
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
-      console.log('Calling backend endpoint (OrderStatus):', checkDebtUrl);
+      console.log('Calling backend check-debt endpoint (OrderStatus):', checkDebtUrl);
       
       const response = await fetch(checkDebtUrl, {
         method: 'POST',
@@ -1232,8 +1269,9 @@ function QhantuPaymentValidatorOrderStatus() {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Backend error (OrderStatus):', response.status, response.statusText, errorText);
-        setErrorMessage('Error al verificar el pago. Por favor intenta de nuevo.');
+        console.error('Backend error en check-debt (OrderStatus):', response.status, response.statusText, errorText);
+        setErrorMessage('Error al verificar el pago con consulta de deuda. Por favor intenta de nuevo.');
+        setIsChecking(false);
         return;
       }
 
@@ -1242,13 +1280,14 @@ function QhantuPaymentValidatorOrderStatus() {
       
       // El backend envuelve la respuesta de Qhantuy en { success: true, data: ... }
       if (!backendResponse.success || !backendResponse.data) {
-        console.error('Backend returned error (OrderStatus):', backendResponse.message || 'Unknown error');
+        console.error('Backend returned error en check-debt (OrderStatus):', backendResponse.message || 'Unknown error');
         setErrorMessage(backendResponse.message || 'Error al verificar el pago');
+        setIsChecking(false);
         return;
       }
       
       const data = backendResponse.data;
-      console.log('Payment check response (CONSULTA DEUDA - OrderStatus):', data);
+      console.log('✅ Payment check response (CONSULTA DEUDA - OrderStatus):', data);
       
       // El servicio 3 - CONSULTA DEUDA retorna la información del pedido directamente
       // Estructura de respuesta puede variar según la documentación
