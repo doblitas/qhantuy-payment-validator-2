@@ -25,7 +25,7 @@ export default async function handler(req, res) {
       
       // Mapear formato de prueba al formato esperado
       // Estado "000" = success
-      const isSuccess = req.body.State === '000' || req.body.State === '000' || 
+      const isSuccess = req.body.State === '000' || 
                         req.body.Message?.toLowerCase().includes('completada');
       
       // Crear objeto con formato esperado
