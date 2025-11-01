@@ -339,6 +339,27 @@ export default async function handler(req, res) {
                 </div>
             </div>
             ` : ''}
+
+            <!-- Resumen -->
+            <div style="margin-top: 30px; padding: 20px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
+                <h3 style="margin-top: 0; color: #004085;">📊 Resumen del Estado</h3>
+                <p style="margin-bottom: 10px;"><strong>Para que la app procese pagos QR, necesitas:</strong></p>
+                <ul style="margin-left: 20px;">
+                    <li><strong>✅ OAuth configurado</strong> - Ya completado (app instalada)</li>
+                    <li><strong>❓ Extension Settings</strong> - <strong>Verifica manualmente</strong> que tengas configurados:
+                        <ul style="margin-left: 20px; margin-top: 5px;">
+                            <li>Qhantuy API Token</li>
+                            <li>Qhantuy AppKey (64 caracteres)</li>
+                            <li>Qhantuy API URL</li>
+                            <li>Nombre del Método de Pago</li>
+                        </ul>
+                    </li>
+                </ul>
+                <p style="margin-top: 15px; margin-bottom: 0;">
+                    <strong>💡 Próximo paso:</strong> Ve a <strong>Shopify Admin → Apps → Qhantuy Payment Validator → Settings</strong> 
+                    y verifica que todos los campos requeridos estén completos con tus credenciales de Qhantuy.
+                </p>
+            </div>
         </div>
 
         <div class="section">
