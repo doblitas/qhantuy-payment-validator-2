@@ -581,7 +581,30 @@ export async function checkDebtStatus(req, res) {
  * 2. Variable de entorno (fallback para configuración manual)
  */
 async function getShopSession(shopDomain) {
-  const normalizedShop = shopDomain || process.env.SHOPIFY_SHOP_DOMAIN || 'default-shop.myshopify.com';
+  // Normalize shop domain: remove protocol, trailing slashes, convert to lowercase
+  let normalizedShop = shopDomain;
+  
+  if (normalizedShop) {
+    normalizedShop = String(normalizedShop)
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '') // Remove protocol
+      .replace(/\/$/, '') // Remove trailing slash
+      .replace(/^www\./, ''); // Remove www prefix if present
+      
+    // Ensure it ends with .myshopify.com or add it if missing
+    if (!normalizedShop.includes('.myshopify.com')) {
+      normalizedShop = normalizedShop.includes('.') ? normalizedShop : `${normalizedShop}.myshopify.com`;
+    }
+  } else {
+    // Only use fallback for development/testing, not production
+    normalizedShop = process.env.SHOPIFY_SHOP_DOMAIN;
+    
+    if (!normalizedShop) {
+      console.warn('⚠️  No shop domain provided and no SHOPIFY_SHOP_DOMAIN env var set');
+      return null; // Return null instead of a default to force proper shop domain
+    }
+  }
   
   // 1. Intentar obtener token guardado automáticamente (persistente)
   let accessToken = await getAccessToken(normalizedShop);
@@ -597,15 +620,13 @@ async function getShopSession(shopDomain) {
   }
   
   if (!accessToken) {
-    console.warn('⚠️  No access token found. Check that:');
-    console.warn('   1. The app has been installed via OAuth callback, OR');
-    console.warn('   2. SHOPIFY_ACCESS_TOKEN environment variable is set');
-    // Return a basic session structure
-    return {
-      shop: normalizedShop,
-      accessToken: null,
-      isOnline: false,
-    };
+    console.warn(`⚠️  No access token found for shop: ${normalizedShop}`);
+    console.warn('   Check that:');
+    console.warn('   1. The app has been installed via OAuth callback for this shop, OR');
+    console.warn('   2. SHOPIFY_ACCESS_TOKEN environment variable is set (single-store only)');
+    console.warn(`   Install URL: ${process.env.SHOPIFY_APP_URL || 'your-backend-url'}/auth?shop=${normalizedShop}`);
+    // Return null to indicate session not found
+    return null;
   }
   
   return {
