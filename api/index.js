@@ -23,31 +23,25 @@ export default async function handler(req, res) {
       // Esto significa que OAuth está configurado (Shopify ya validó la instalación)
       const shopDomain = String(shopParam).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
       
-      // Verificar estado de conexiones (opcional, para mostrar info adicional)
-      let verificationStatus = null;
-      let hasOAuthTokenInStorage = false;
+      // Verificar estado completo usando el nuevo endpoint de checklist
+      let statusCheck = null;
       try {
-        const { hasAccessToken } = await import('../web/backend/storage.js');
-        hasOAuthTokenInStorage = await hasAccessToken(shopDomain);
-        
-        // Llamar al endpoint de verificación para obtener estado completo (opcional)
-        const verifyUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://qhantuy-payment-backend.vercel.app'}/api/verify?shop=${encodeURIComponent(shopDomain)}`;
-        try {
-          const verifyResponse = await fetch(verifyUrl);
-          if (verifyResponse.ok) {
-            verificationStatus = await verifyResponse.json();
-          }
-        } catch (error) {
-          console.error('Error checking verification:', error);
+        const statusUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://qhantuy-payment-backend.vercel.app'}/api/check-status?shop=${encodeURIComponent(shopDomain)}`;
+        const statusResponse = await fetch(statusUrl);
+        if (statusResponse.ok) {
+          statusCheck = await statusResponse.json();
         }
       } catch (error) {
-        console.error('Error checking OAuth status:', error);
+        console.error('Error checking status:', error);
       }
       
       // Si la app está cargando como embebida, OAuth está configurado (Shopify lo validó)
-      // Solo verificamos token en storage como confirmación adicional
-      const oauthConfigured = true; // Siempre true si viene host (Shopify validó instalación)
-      const isReady = verificationStatus?.ready || hasOAuthTokenInStorage || false;
+      const checklist = statusCheck?.checklist || {
+        oauth: { configured: true, message: 'App instalada' },
+        tokenInStorage: { configured: false, message: 'Verificando...' },
+        vercelKV: { configured: false, message: 'Verificando...' },
+        extensionSettings: { configured: null, message: 'Requiere verificación manual' }
+      };
       
       return res.status(200).send(`<!DOCTYPE html>
 <html lang="es">
@@ -213,6 +207,64 @@ export default async function handler(req, res) {
             margin-right: 8px;
             font-size: 18px;
         }
+        .checklist-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border-left: 4px solid;
+        }
+        .checklist-item.configured {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        .checklist-item.not-configured {
+            border-left-color: #ffc107;
+            background: #fff3cd;
+        }
+        .checklist-item.unknown {
+            border-left-color: #6c757d;
+            background: #e9ecef;
+        }
+        .checklist-item-icon {
+            font-size: 20px;
+            margin-right: 12px;
+            min-width: 24px;
+        }
+        .checklist-item-content {
+            flex: 1;
+        }
+        .checklist-item-title {
+            font-weight: bold;
+            margin-bottom: 4px;
+            color: #333;
+        }
+        .checklist-item-note {
+            font-size: 13px;
+            color: #666;
+            font-style: italic;
+        }
+        .checklist-item-required {
+            font-size: 11px;
+            color: #dc3545;
+            font-weight: bold;
+            margin-top: 4px;
+        }
+        .checklist-item-optional {
+            font-size: 11px;
+            color: #6c757d;
+            margin-top: 4px;
+        }
+        .checklist-fields {
+            margin-top: 10px;
+            margin-left: 20px;
+        }
+        .checklist-fields li {
+            margin: 4px 0;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -220,54 +272,73 @@ export default async function handler(req, res) {
         <h1>🔧 Qhantuy Payment Validator</h1>
         <p class="subtitle">Guía de Configuración e Información del Servicio</p>
         
-        ${isReady ? `
-        <div class="status-banner ready">
-            <h3>✅ ¡App Instalada y Lista para Configurar!</h3>
-            <p><strong>Tu app está instalada correctamente en Shopify.</strong></p>
-            <div class="status-check">
-                <span class="status-check-icon">✅</span>
-                <span>OAuth configurado (app instalada correctamente)</span>
-            </div>
-            <div class="status-check">
-                <span class="status-check-icon">✅</span>
-                <span>Backend conectado</span>
-            </div>
-            ${hasOAuthTokenInStorage ? `
-            <div class="status-check">
-                <span class="status-check-icon">✅</span>
-                <span>Token de acceso guardado en servidor</span>
-            </div>
-            ` : ''}
-            <p style="margin-top: 15px;"><strong>Próximo paso:</strong> Ve a <strong>Shopify Admin → Apps → Qhantuy Payment Validator → Settings</strong> y configura las credenciales de Qhantuy para comenzar a procesar pagos.</p>
-        </div>
-        ` : `
-        <div class="status-banner not-ready">
-            <h3>⚠️ App Instalada - Configuración Pendiente</h3>
-            <p><strong>La app está instalada correctamente en Shopify. Solo falta configurar las credenciales de Qhantuy.</strong></p>
-            <div class="status-check">
-                <span class="status-check-icon">✅</span>
-                <span>OAuth configurado (app instalada)</span>
-            </div>
-            <div class="status-check">
-                <span class="status-check-icon">⚠️</span>
-                <span>Falta configurar Extension Settings (credenciales Qhantuy)</span>
-            </div>
-            <p style="margin-top: 15px;"><strong>Acción requerida:</strong> Ve a <strong>Shopify Admin → Apps → Qhantuy Payment Validator → Settings</strong> y configura:</p>
-            <ul style="margin-top: 10px; margin-left: 20px;">
-                <li>Qhantuy API Token</li>
-                <li>Qhantuy AppKey (64 caracteres)</li>
-                <li>Qhantuy API URL</li>
-                <li>Nombre del Método de Pago</li>
-            </ul>
-        </div>
-        `}
-        
         <div class="shop-info">
             <strong>Tienda:</strong> ${shopDomain}
-            <br>
-            <strong>Estado de OAuth:</strong> ✅ Configurado (app instalada)
-            ${hasOAuthTokenInStorage ? '<br><strong>Token en servidor:</strong> ✅ Guardado' : '<br><strong>Token en servidor:</strong> ⚠️ No encontrado (puede regenerarse si es necesario)'}
-            ${verificationStatus?.verification?.checks?.vercel_kv ? '<br><strong>Vercel KV:</strong> ✅ Conectado' : ''}
+        </div>
+
+        <div class="section">
+            <h2>✅ Checklist de Configuración</h2>
+            <p style="margin-bottom: 20px;">Verifica el estado de cada componente necesario para que la app funcione correctamente:</p>
+            
+            <!-- OAuth -->
+            <div class="checklist-item configured">
+                <span class="checklist-item-icon">✅</span>
+                <div class="checklist-item-content">
+                    <div class="checklist-item-title">1. OAuth / Instalación de la App</div>
+                    <div class="checklist-item-note">${checklist.oauth.message}</div>
+                    <div class="checklist-item-note" style="margin-top: 4px;">Si puedes ver esta página, la app está instalada correctamente en Shopify.</div>
+                </div>
+            </div>
+
+            <!-- Token en Storage -->
+            <div class="checklist-item ${checklist.tokenInStorage.configured ? 'configured' : 'not-configured'}">
+                <span class="checklist-item-icon">${checklist.tokenInStorage.configured ? '✅' : '⚠️'}</span>
+                <div class="checklist-item-content">
+                    <div class="checklist-item-title">2. Token de Acceso en Servidor</div>
+                    <div class="checklist-item-note">${checklist.tokenInStorage.message}</div>
+                    <div class="checklist-item-note" style="margin-top: 4px; color: #856404;">${checklist.tokenInStorage.note}</div>
+                    <div class="checklist-item-optional">ℹ️ No crítico - Shopify maneja la autenticación automáticamente</div>
+                </div>
+            </div>
+
+            <!-- Extension Settings -->
+            <div class="checklist-item unknown">
+                <span class="checklist-item-icon">❓</span>
+                <div class="checklist-item-content">
+                    <div class="checklist-item-title">3. Extension Settings (Credenciales Qhantuy)</div>
+                    <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere verificación manual</div>
+                    <div class="checklist-item-note" style="margin-top: 8px;">
+                        <strong>Dónde verificar:</strong> Shopify Admin → Apps → Qhantuy Payment Validator → Settings
+                    </div>
+                    <div class="checklist-item-required" style="margin-top: 10px;">Campos Requeridos:</div>
+                    <ul class="checklist-fields">
+                        <li><strong>Qhantuy API Token</strong> - Token de autenticación de Qhantuy</li>
+                        <li><strong>Qhantuy AppKey</strong> - Clave de 64 caracteres</li>
+                        <li><strong>Qhantuy API URL</strong> - URL del API (pruebas o producción)</li>
+                        <li><strong>Nombre del Método de Pago</strong> - Nombre exacto del método de pago manual</li>
+                    </ul>
+                    <div class="checklist-item-optional" style="margin-top: 8px;">
+                        Opcional: Backend API URL (tiene valor por defecto)
+                    </div>
+                    <div class="important" style="margin-top: 10px; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+                        <strong>💡 Cómo verificar:</strong> Ve a Extension Settings y confirma que los campos requeridos estén completos. 
+                        Si están vacíos o tienen valores de prueba, necesitas configurarlos con tus credenciales reales de Qhantuy.
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vercel KV (opcional) -->
+            ${checklist.vercelKV ? `
+            <div class="checklist-item ${checklist.vercelKV.configured ? 'configured' : 'not-configured'}">
+                <span class="checklist-item-icon">${checklist.vercelKV.configured ? '✅' : '⚠️'}</span>
+                <div class="checklist-item-content">
+                    <div class="checklist-item-title">4. Base de Datos (Vercel KV) - Opcional</div>
+                    <div class="checklist-item-note">${checklist.vercelKV.message}</div>
+                    <div class="checklist-item-note" style="margin-top: 4px; color: #856404;">${checklist.vercelKV.note}</div>
+                    <div class="checklist-item-optional">ℹ️ No crítico para funcionamiento básico</div>
+                </div>
+            </div>
+            ` : ''}
         </div>
 
         <div class="section">

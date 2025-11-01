@@ -27,6 +27,10 @@
       "destination": "/api/verify.js"
     },
     {
+      "source": "/api/check-status",
+      "destination": "/api/check-status.js"
+    },
+    {
       "source": "/auth/callback",
       "destination": "/api/auth-callback.js"
     },
