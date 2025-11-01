@@ -1347,13 +1347,15 @@ function QhantuPaymentValidatorOrderStatus() {
           console.log('Payment still pending or other status (OrderStatus):', paymentStatus, payment);
         }
       } else {
-        console.warn('CONSULTA DEUDA returned process: false (OrderStatus)', data.message || data);
+        console.warn('⚠️ CONSULTA DEUDA returned process: false (OrderStatus)', data.message || data);
+        setErrorMessage(data.message || 'El pago aún no ha sido procesado. Por favor espera unos momentos e intenta de nuevo.');
       }
     } catch (error) {
-      console.error('Error checking payment:', error);
-      setErrorMessage('Error al verificar el pago');
+      console.error('❌ Error checking payment status (OrderStatus):', error);
+      setErrorMessage(`Error al verificar el pago: ${error.message || 'Error desconocido'}`);
     } finally {
       setIsChecking(false);
+      console.log('✅ Verificación de pago completada (OrderStatus)');
     }
   }, [transactionId, apiUrl, apiToken, appkey, storage, isChecking, getOrderIdentifiers, shop]);
   
