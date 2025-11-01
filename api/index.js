@@ -18,8 +18,31 @@ export default async function handler(req, res) {
     // NO redirigir, mostrar página HTML directamente
     if (hostParam && shopParam) {
       // Shopify está cargando la app embebida
-      // Mostrar página HTML con información de configuración (no redirigir)
+      // Verificar estado de OAuth y mostrar información de configuración
       const shopDomain = String(shopParam).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      // Verificar estado de OAuth y conexiones
+      let verificationStatus = null;
+      try {
+        const { hasAccessToken } = await import('../web/backend/storage.js');
+        const hasToken = await hasAccessToken(shopDomain);
+        
+        // Llamar al endpoint de verificación para obtener estado completo
+        const verifyUrl = `${process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'https://qhantuy-payment-backend.vercel.app'}/api/verify?shop=${encodeURIComponent(shopDomain)}`;
+        try {
+          const verifyResponse = await fetch(verifyUrl);
+          if (verifyResponse.ok) {
+            verificationStatus = await verifyResponse.json();
+          }
+        } catch (error) {
+          console.error('Error checking verification:', error);
+        }
+      } catch (error) {
+        console.error('Error checking OAuth status:', error);
+      }
+      
+      const isReady = verificationStatus?.ready || false;
+      const hasOAuthToken = verificationStatus?.verification?.checks?.oauth_token || false;
       
       return res.status(200).send(`<!DOCTYPE html>
 <html lang="es">
@@ -148,6 +171,43 @@ export default async function handler(req, res) {
             font-size: 14px;
             text-align: center;
         }
+        .status-banner {
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            border-left: 4px solid;
+        }
+        .status-banner.ready {
+            background: #d4edda;
+            border-color: #28a745;
+            color: #155724;
+        }
+        .status-banner.not-ready {
+            background: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .status-banner.error {
+            background: #f8d7da;
+            border-color: #dc3545;
+            color: #721c24;
+        }
+        .status-banner h3 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+        }
+        .status-banner ul {
+            margin: 10px 0 0 20px;
+        }
+        .status-check {
+            display: flex;
+            align-items: center;
+            margin: 8px 0;
+        }
+        .status-check-icon {
+            margin-right: 8px;
+            font-size: 18px;
+        }
     </style>
 </head>
 <body>
@@ -155,10 +215,51 @@ export default async function handler(req, res) {
         <h1>🔧 Qhantuy Payment Validator</h1>
         <p class="subtitle">Guía de Configuración e Información del Servicio</p>
         
+        ${isReady ? `
+        <div class="status-banner ready">
+            <h3>✅ ¡App Lista para Usar!</h3>
+            <p><strong>Tu app está completamente configurada y lista para procesar pagos QR.</strong></p>
+            <div class="status-check">
+                <span class="status-check-icon">✅</span>
+                <span>OAuth configurado correctamente</span>
+            </div>
+            <div class="status-check">
+                <span class="status-check-icon">✅</span>
+                <span>Backend conectado</span>
+            </div>
+            <p style="margin-top: 15px;"><strong>Próximo paso:</strong> Configura las credenciales de Qhantuy en Extension Settings si aún no lo has hecho.</p>
+        </div>
+        ` : hasOAuthToken ? `
+        <div class="status-banner not-ready">
+            <h3>⚠️ Configuración Parcial</h3>
+            <p><strong>La app está instalada pero necesita configuración adicional.</strong></p>
+            <div class="status-check">
+                <span class="status-check-icon">✅</span>
+                <span>OAuth configurado</span>
+            </div>
+            <div class="status-check">
+                <span class="status-check-icon">❌</span>
+                <span>Falta configurar Extension Settings</span>
+            </div>
+            <p style="margin-top: 15px;"><strong>Acción requerida:</strong> Ve a <strong>Shopify Admin → Apps → Qhantuy Payment Validator → Settings</strong> y configura las credenciales de Qhantuy.</p>
+        </div>
+        ` : `
+        <div class="status-banner error">
+            <h3>❌ App No Configurada</h3>
+            <p><strong>La app necesita ser instalada completamente.</strong></p>
+            <div class="status-check">
+                <span class="status-check-icon">❌</span>
+                <span>OAuth no configurado</span>
+            </div>
+            <p style="margin-top: 15px;"><strong>Acción requerida:</strong> Instala la app completando el proceso de OAuth.</p>
+        </div>
+        `}
+        
         <div class="shop-info">
             <strong>Tienda:</strong> ${shopDomain}
             <br>
-            <strong>Estado:</strong> ✅ App instalada correctamente
+            <strong>Estado de OAuth:</strong> ${hasOAuthToken ? '✅ Configurado' : '❌ No configurado'}
+            ${verificationStatus?.verification?.checks?.vercel_kv ? '<br><strong>Vercel KV:</strong> ✅ Conectado' : ''}
         </div>
 
         <div class="section">
