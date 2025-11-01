@@ -482,6 +482,36 @@ export default async function handler(req, res) {
             <p style="margin-top: 10px;">Para más información, consulta la documentación completa en el repositorio del proyecto.</p>
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const btn = document.getElementById('goToCheckoutConfig');
+            if (btn) {
+                btn.addEventListener('click', function() {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const host = urlParams.get('host');
+                    const shop = urlParams.get('shop') || '${shopDomain}';
+                    let checkoutUrl = host ? `https://${decodeURIComponent(host).replace(/\//g, '')}/admin/settings/checkout` : `https://${shop}/admin/settings/checkout`;
+                    if (window.shopify?.redirect) {
+                        window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
+                    } else {
+                        window.location.href = checkoutUrl;
+                    }
+                });
+                btn.addEventListener('mouseenter', function() {
+                    this.style.background = '#0056b3';
+                    this.style.transform = 'translateY(-1px)';
+                    this.style.boxShadow = '0 4px 8px rgba(0,123,255,0.3)';
+                });
+                btn.addEventListener('mouseleave', function() {
+                    this.style.background = '#007bff';
+                    this.style.transform = 'translateY(0)';
+                    this.style.boxShadow = 'none';
+                });
+            }
+        });
+    </script>
+
 </body>
 </html>`);
     }
