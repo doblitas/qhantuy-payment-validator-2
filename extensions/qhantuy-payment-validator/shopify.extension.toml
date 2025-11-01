@@ -61,4 +61,4 @@ api_access = true
   type = "single_line_text_field"
   name = "Backend API URL"
   description = "URL completa del backend de la aplicación (ej: https://tu-app.herokuapp.com)"
-  default = "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app"
+  default = "https://qhantuy-payment-backend.vercel.app"

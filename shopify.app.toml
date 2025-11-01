@@ -2,7 +2,7 @@
 
 name = "qhantuy-payment-validator-1"
 client_id = "ea21fdd4c8cd62a5590a71a641429cd4"
-application_url = "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app"
+application_url = "https://qhantuy-payment-backend.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -11,9 +11,9 @@ scopes = "read_orders,write_orders,read_checkouts"
 
 [auth]
 redirect_urls = [
-  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/auth/callback",
-  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/api/auth/callback",
-  "https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/auth/shopify/callback",
+  "https://qhantuy-payment-backend.vercel.app/api/auth/callback",
+  "https://qhantuy-payment-backend.vercel.app/auth/shopify/callback",
+  "https://qhantuy-payment-backend.vercel.app/auth/callback",
   "http://localhost:3000/auth/callback"
 ]
 
