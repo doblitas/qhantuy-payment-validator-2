@@ -3,6 +3,10 @@
   "buildCommand": null,
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/api/index.js"
+    },
+    {
       "source": "/api/qhantuy/check-debt",
       "destination": "/api/qhantuy/check-debt.js"
     },
