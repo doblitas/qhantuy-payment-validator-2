@@ -237,8 +237,20 @@ export async function confirmPayment(req, res) {
       });
     }
 
-    // Get shop session
-    const session = await getShopSession(req.headers['x-shopify-shop-domain']);
+    // Get shop session - try multiple sources for shop domain
+    const shopDomain = req.headers['x-shopify-shop-domain'] || 
+                       req.query.shop || 
+                       req.body.shop ||
+                       req.headers['x-shopify-shop'];
+    
+    if (!shopDomain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Shop domain is required. Provide X-Shopify-Shop-Domain header or shop query parameter.'
+      });
+    }
+    
+    const session = await getShopSession(shopDomain);
     
     if (!session) {
       return res.status(401).json({

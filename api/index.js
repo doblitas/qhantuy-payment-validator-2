@@ -170,14 +170,6 @@ export default async function handler(req, res) {
         .link:hover {
             text-decoration: underline;
         }
-        .footer {
-            margin-top: 40px;
-            padding-top: 20px;
-            border-top: 1px solid #e9ecef;
-            color: #6c757d;
-            font-size: 14px;
-            text-align: center;
-        }
         .status-banner {
             padding: 20px;
             border-radius: 8px;
