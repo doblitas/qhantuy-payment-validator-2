@@ -1042,18 +1042,45 @@ function QhantuPaymentValidatorThankYou() {
       }
       
       if (checkoutData?.process && checkoutData.transaction_id) {
-        console.log('Checkout successful, saving...');
-        setTransactionId(checkoutData.transaction_id);
-        setQrData(checkoutData.image_data);
+        // Obtener y limpiar el transaction_id de la respuesta
+        const rawTxId = checkoutData.transaction_id;
+        const cleanTransactionId = String(rawTxId).trim();
         
-        // Guardar en storage
-        await storage.write('transaction_id', checkoutData.transaction_id.toString());
-        await storage.write('qr_image', checkoutData.image_data);
+        console.log('📝 Transaction ID from Qhantuy response:', {
+          raw: rawTxId,
+          cleaned: cleanTransactionId,
+          type: typeof rawTxId,
+          process: checkoutData.process
+        });
+        
+        // VERIFICACIÓN FINAL: Asegurar que no creamos duplicados
+        const finalCheck = await storage.read('transaction_id');
+        const cleanedFinalCheck = finalCheck ? String(finalCheck).trim() : null;
+        
+        if (cleanedFinalCheck && cleanedFinalCheck !== cleanTransactionId) {
+          console.warn('⚠️ WARNING: Another transaction_id exists in storage:', cleanedFinalCheck);
+          console.warn('   This checkout may be a duplicate. Using existing:', cleanedFinalCheck);
+          setTransactionId(cleanedFinalCheck);
+          const existingQr = await storage.read('qr_image');
+          if (existingQr) setQrData(existingQr);
+        } else {
+          // Guardar el nuevo checkout con transaction_id limpio
+          console.log('✅ Saving new checkout with transaction_id:', cleanTransactionId);
+          setTransactionId(cleanTransactionId);
+          setQrData(checkoutData.image_data);
+          
+          // Guardar en storage para persistencia (como string limpio)
+          await storage.write('transaction_id', cleanTransactionId);
+          await storage.write('qr_image', checkoutData.image_data);
+          
+          console.log('✅ Transaction ID saved to storage:', cleanTransactionId);
+        }
         
         setPaymentStatus('pending');
-        console.log('Payment initialized successfully');
+        console.log('✅ Payment initialized successfully');
         retryAttemptRef.current = 0; // Reset retry count on success
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false; // Liberar el lock
       } else {
         console.error('Checkout failed:', checkoutData);
         console.error('Checkout process:', checkoutData?.process);

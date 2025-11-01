@@ -1045,23 +1045,38 @@ function QhantuPaymentValidatorOrderStatus() {
       }
       
       if (checkoutData?.process && checkoutData.transaction_id) {
+        // Obtener y limpiar el transaction_id de la respuesta
+        const rawTxId = checkoutData.transaction_id;
+        const cleanTransactionId = String(rawTxId).trim();
+        
+        console.log('📝 Transaction ID from Qhantuy response (OrderStatus):', {
+          raw: rawTxId,
+          cleaned: cleanTransactionId,
+          type: typeof rawTxId,
+          process: checkoutData.process
+        });
+        
         // VERIFICACIÓN FINAL: Asegurar que no creamos duplicados
         const finalCheck = await storage.read('transaction_id');
-        if (finalCheck && finalCheck !== checkoutData.transaction_id.toString()) {
-          console.warn('⚠️ WARNING (OrderStatus): Another transaction_id exists in storage:', finalCheck);
-          console.warn('   This checkout may be a duplicate. Using existing:', finalCheck);
-          setTransactionId(finalCheck);
+        const cleanedFinalCheck = finalCheck ? String(finalCheck).trim() : null;
+        
+        if (cleanedFinalCheck && cleanedFinalCheck !== cleanTransactionId) {
+          console.warn('⚠️ WARNING (OrderStatus): Another transaction_id exists in storage:', cleanedFinalCheck);
+          console.warn('   This checkout may be a duplicate. Using existing:', cleanedFinalCheck);
+          setTransactionId(cleanedFinalCheck);
           const existingQr = await storage.read('qr_image');
           if (existingQr) setQrData(existingQr);
         } else {
-          // Guardar el nuevo checkout
-          console.log('Checkout successful (OrderStatus), saving...');
-          setTransactionId(checkoutData.transaction_id);
+          // Guardar el nuevo checkout con transaction_id limpio
+          console.log('✅ Saving new checkout with transaction_id (OrderStatus):', cleanTransactionId);
+          setTransactionId(cleanTransactionId);
           setQrData(checkoutData.image_data);
           
-          // Guardar en storage
-          await storage.write('transaction_id', checkoutData.transaction_id.toString());
+          // Guardar en storage para persistencia (como string limpio)
+          await storage.write('transaction_id', cleanTransactionId);
           await storage.write('qr_image', checkoutData.image_data);
+          
+          console.log('✅ Transaction ID saved to storage (OrderStatus):', cleanTransactionId);
         }
         
         setPaymentStatus('pending');
