@@ -266,6 +266,89 @@ export default async function handler(req, res) {
             margin: 4px 0;
             font-size: 14px;
         }
+        /* Tabs System */
+        .tabs-container {
+            margin-top: 30px;
+        }
+        .tabs-header {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            margin-bottom: 20px;
+            gap: 0;
+        }
+        .tab-button {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.2s;
+            margin-bottom: -2px;
+        }
+        .tab-button:hover {
+            color: #007bff;
+            background: #f8f9fa;
+        }
+        .tab-button.active {
+            color: #007bff;
+            border-bottom-color: #007bff;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Accordion for nested content */
+        .accordion-item {
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+        .accordion-header {
+            padding: 14px 16px;
+            background: #f8f9fa;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+            color: #333;
+            transition: background 0.2s;
+        }
+        .accordion-header:hover {
+            background: #e9ecef;
+        }
+        .accordion-header::after {
+            content: '▼';
+            font-size: 12px;
+            color: #666;
+            transition: transform 0.2s;
+        }
+        .accordion-item.open .accordion-header::after {
+            transform: rotate(180deg);
+        }
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .accordion-item.open .accordion-content {
+            max-height: 1000px;
+        }
+        .accordion-body {
+            padding: 16px;
+            background: white;
+        }
     </style>
 </head>
 <body>
@@ -273,214 +356,294 @@ export default async function handler(req, res) {
         <h1>🔧 QPOS Validator</h1>
         <p class="subtitle">Guía de Configuración e Información del Servicio</p>
         
-        <div class="shop-info">
+        <div class="shop-info" style="margin-bottom: 20px;">
             <strong>Tienda:</strong> ${shopDomain}
         </div>
 
-        <div class="section">
-            <h2>✅ Checklist de Configuración</h2>
-            <p style="margin-bottom: 20px;">Verifica el estado de cada componente necesario para que la app funcione correctamente:</p>
-            
-            <!-- OAuth -->
-            <div class="checklist-item configured">
-                <span class="checklist-item-icon">✅</span>
-                <div class="checklist-item-content">
-                    <div class="checklist-item-title">1. OAuth / Instalación de la App</div>
-                    <div class="checklist-item-note">${checklist.oauth.message}</div>
-                    <div class="checklist-item-note" style="margin-top: 4px;">Si puedes ver esta página, la app está instalada correctamente en Shopify.</div>
-                </div>
+        <!-- Tabs Navigation -->
+        <div class="tabs-container">
+            <div class="tabs-header">
+                <button class="tab-button active" onclick="switchTab('config')">⚙️ Configuración</button>
+                <button class="tab-button" onclick="switchTab('credentials')">🔑 Credenciales</button>
+                <button class="tab-button" onclick="switchTab('documents')">📋 Documentos</button>
+                <button class="tab-button" onclick="switchTab('help')">❓ Ayuda</button>
             </div>
 
-            <!-- Token en Storage -->
-            <div class="checklist-item ${checklist.tokenInStorage.configured ? 'configured' : 'not-configured'}">
-                <span class="checklist-item-icon">${checklist.tokenInStorage.configured ? '✅' : '⚠️'}</span>
-                <div class="checklist-item-content">
-                    <div class="checklist-item-title">2. Token de Acceso en Servidor</div>
-                    <div class="checklist-item-note">${checklist.tokenInStorage.message}</div>
-                    <div class="checklist-item-note" style="margin-top: 4px; color: #856404;">${checklist.tokenInStorage.note}</div>
-                    <div class="checklist-item-optional">ℹ️ No crítico - Shopify maneja la autenticación automáticamente</div>
-                </div>
-            </div>
-
-            <!-- Extension Settings -->
-            <div class="checklist-item unknown">
-                <span class="checklist-item-icon">❓</span>
-                <div class="checklist-item-content">
-                    <div class="checklist-item-title">3. Extension Settings (Credenciales Qhantuy)</div>
-                    <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere verificación manual</div>
-                    <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
-                        <strong>📍 Dónde configurar:</strong><br><br>
-                        <strong>Paso 1:</strong> Abre una nueva pestaña en tu navegador y ve a tu <strong>Shopify Admin</strong><br>
-                        <strong>Paso 2:</strong> Navega a <strong>Settings → Checkout</strong><br>
-                        <strong>Paso 3:</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"QPOS Validator"</strong><br>
-                        <strong>Paso 4:</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
-                        <strong>Paso 5:</strong> Configura los campos requeridos una sola vez - se compartirán automáticamente entre Thank You y Order Status pages<br><br>
-                        <em style="font-size: 12px; display: block; margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px;">
-                            💡 <strong>Importante:</strong> Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones gracias al sistema de almacenamiento compartido.
-                        </em>
+            <!-- Tab 1: Configuración -->
+            <div id="tab-config" class="tab-content active">
+                <div class="section">
+                    <h2 style="margin-top: 0;">✅ Estado de Configuración</h2>
+                    
+                    <!-- OAuth -->
+                    <div class="checklist-item configured">
+                        <span class="checklist-item-icon">✅</span>
+                        <div class="checklist-item-content">
+                            <div class="checklist-item-title">1. App Instalada</div>
+                            <div class="checklist-item-note">La app está instalada correctamente en Shopify.</div>
+                        </div>
                     </div>
-                    <div class="checklist-item-required" style="margin-top: 10px;">Campos Requeridos:</div>
-                    <ul class="checklist-fields">
-                        <li><strong>Qhantuy API Token</strong> - Token de autenticación de Qhantuy</li>
-                        <li><strong>Qhantuy AppKey</strong> - Clave de 64 caracteres</li>
-                        <li><strong>Qhantuy API URL</strong> - URL del API (pruebas o producción)</li>
-                        <li><strong>Nombre del Método de Pago</strong> - Nombre exacto del método de pago manual</li>
-                    </ul>
-                    <div class="checklist-item-optional" style="margin-top: 8px;">
-                        Opcional: Backend API URL (tiene valor por defecto)
-                    </div>
-                    <div class="important" style="margin-top: 10px; padding: 10px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
-                        <strong>💡 Cómo verificar:</strong> Ve a Extension Settings y confirma que los campos requeridos estén completos. 
-                        Si están vacíos o tienen valores de prueba, necesitas configurarlos con tus credenciales reales de Qhantuy.
-                    </div>
-                </div>
-            </div>
 
-            <!-- Vercel KV (opcional) -->
-            ${checklist.vercelKV ? `
-            <div class="checklist-item ${checklist.vercelKV.configured ? 'configured' : 'not-configured'}">
-                <span class="checklist-item-icon">${checklist.vercelKV.configured ? '✅' : '⚠️'}</span>
-                <div class="checklist-item-content">
-                    <div class="checklist-item-title">4. Base de Datos (Vercel KV) - Opcional</div>
-                    <div class="checklist-item-note">${checklist.vercelKV.message}</div>
-                    <div class="checklist-item-note" style="margin-top: 4px; color: #856404;">${checklist.vercelKV.note}</div>
-                    <div class="checklist-item-optional">ℹ️ No crítico para funcionamiento básico</div>
-                </div>
-            </div>
-            ` : ''}
+                    <!-- Extension Settings -->
+                    <div class="checklist-item unknown">
+                        <span class="checklist-item-icon">❓</span>
+                        <div class="checklist-item-content">
+                            <div class="checklist-item-title">2. Extension Settings (Credenciales Qhantuy)</div>
+                            <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere configuración</div>
+                            <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
+                                <strong>📍 Cómo configurar:</strong><br><br>
+                                <strong>Paso 1:</strong> Abre una nueva pestaña y ve a <strong>Shopify Admin → Settings → Checkout</strong><br>
+                                <strong>Paso 2:</strong> Busca <strong>"QPOS Validator"</strong> en Checkout extensions o Order status page<br>
+                                <strong>Paso 3:</strong> Haz clic en el <strong>icono ⚙️</strong> para abrir Settings<br>
+                                <strong>Paso 4:</strong> Completa los campos requeridos (ver pestaña "Credenciales")<br><br>
+                                <em style="font-size: 12px; padding: 8px; background: #fff3cd; border-radius: 4px; display: block;">
+                                    💡 <strong>Importante:</strong> Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.
+                                </em>
+                            </div>
+                        </div>
+                    </div>
 
-            <!-- Resumen -->
-            <div style="margin-top: 30px; padding: 20px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
-                <h3 style="margin-top: 0; color: #004085;">📊 Resumen del Estado</h3>
-                <p style="margin-bottom: 10px;"><strong>Para que la app procese pagos QR, necesitas:</strong></p>
-                <ul style="margin-left: 20px;">
-                    <li><strong>✅ OAuth configurado</strong> - Ya completado (app instalada)</li>
-                    <li><strong>❓ Extension Settings</strong> - <strong>Verifica manualmente</strong> que tengas configurados:
-                        <ul style="margin-left: 20px; margin-top: 5px;">
-                            <li>Qhantuy API Token</li>
-                            <li>Qhantuy AppKey (64 caracteres)</li>
-                            <li>Qhantuy API URL</li>
-                            <li>Nombre del Método de Pago</li>
+                    <!-- Resumen rápido -->
+                    <div style="margin-top: 25px; padding: 20px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
+                        <h3 style="margin-top: 0; color: #004085; font-size: 18px;">📊 Resumen</h3>
+                        <p style="margin-bottom: 12px;"><strong>Para procesar pagos QR necesitas:</strong></p>
+                        <ul style="margin-left: 20px; margin-bottom: 0;">
+                            <li><strong>✅ App instalada</strong> - Completado</li>
+                            <li><strong>❓ Extension Settings</strong> - Configura las credenciales en Settings → Checkout</li>
                         </ul>
-                    </li>
-                </ul>
-                <p style="margin-top: 15px; margin-bottom: 0;">
-                    <strong>💡 Próximo paso:</strong> Ve a <strong>Settings → Checkout</strong> en Shopify Admin, busca 
-                    <strong>"QPOS Validator"</strong> y configura los campos requeridos una sola vez. 
-                    Los settings se sincronizarán automáticamente entre Thank You y Order Status pages.
-                </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 2: Credenciales -->
+            <div id="tab-credentials" class="tab-content">
+                <div class="section">
+                    <h2 style="margin-top: 0;">🔑 Credenciales de Qhantuy</h2>
+                    <p>Estas son las credenciales que Qhantuy te proporcionará después de aprobar tu solicitud:</p>
+                    
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>1. X-API-Token (Token de Autenticación)</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy API Token</code></p>
+                                <p><strong>Formato:</strong> Token alfanumérico único</p>
+                                <p><strong>Ejemplo:</strong> <code>abc123def456ghi789jkl012mno345pqr678</code></p>
+                                <p>Se usa para autenticar todas las peticiones a la API de Qhantuy.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>2. AppKey (Clave de 64 caracteres)</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy AppKey</code></p>
+                                <p><strong>Formato:</strong> Exactamente <strong>64 caracteres</strong> hexadecimales</p>
+                                <p><strong>Ejemplo:</strong> <code>0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</code></p>
+                                <p>Identifica tu cuenta de comerciante en Qhantuy.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>3. API URL (URL del Endpoint)</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy API URL</code></p>
+                                <p><strong>Pruebas:</strong> <code>https://testingcheckout.qhantuy.com/external-api</code></p>
+                                <p><strong>Producción:</strong> <code>https://checkout.qhantuy.com/external-api</code></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>4. Nombre del Método de Pago</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Nombre del Método de Pago</code></p>
+                                <p><strong>⚠️ Importante:</strong> Debe coincidir <strong>exactamente</strong> con el nombre del método de pago manual que creaste en Shopify.</p>
+                                <p><strong>Ejemplos:</strong> "Pago QR Manual", "Transferencia QR", "QR Qhantuy", etc.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 3: Documentos -->
+            <div id="tab-documents" class="tab-content">
+                <div class="section">
+                    <h2 style="margin-top: 0;">📋 Documentos Necesarios para Registrarse en Qhantuy</h2>
+                    
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>📄 Documentos de Identificación</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <ul>
+                                    <li>Registro de Comercio/NIT (Registro tributario)</li>
+                                    <li>Cédula de Identidad o Pasaporte del representante legal</li>
+                                    <li>Poder legal (si aplica)</li>
+                                    <li>Constitución de la empresa (para empresas)</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>🏦 Documentos Bancarios</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <ul>
+                                    <li>Cuenta bancaria activa (comprobante)</li>
+                                    <li>Estado de cuenta (últimos 3 meses)</li>
+                                    <li>Datos de cuenta para recibir pagos</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>🏢 Documentos del Negocio</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <ul>
+                                    <li>Certificado de registro de marca (si aplica)</li>
+                                    <li>Licencia de funcionamiento (si es requerida)</li>
+                                    <li>Catálogo de productos/servicios</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>📧 Información de Contacto</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <ul>
+                                    <li>Email corporativo</li>
+                                    <li>Teléfono de contacto</li>
+                                    <li>Dirección fiscal/comercial</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab 4: Ayuda -->
+            <div id="tab-help" class="tab-content">
+                <div class="section">
+                    <h2 style="margin-top: 0;">❓ Preguntas Frecuentes</h2>
+                    
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>¿Cómo configuro la extensión?</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>Paso 1:</strong> Ve a Shopify Admin → <strong>Settings → Checkout</strong></p>
+                                <p><strong>Paso 2:</strong> Busca <strong>"QPOS Validator"</strong> en la lista de extensiones</p>
+                                <p><strong>Paso 3:</strong> Haz clic en el icono ⚙️ para abrir Settings</p>
+                                <p><strong>Paso 4:</strong> Completa los campos requeridos con tus credenciales de Qhantuy</p>
+                                <p><strong>Paso 5:</strong> Guarda la configuración</p>
+                                <p><em>💡 Solo necesitas configurar una vez - se compartirá entre Thank You y Order Status pages.</em></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>¿Dónde obtengo las credenciales de Qhantuy?</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p>Contacta a Qhantuy para registrarte como comerciante. Una vez aprobada tu solicitud, te proporcionarán:</p>
+                                <ul>
+                                    <li>X-API-Token</li>
+                                    <li>AppKey (64 caracteres)</li>
+                                    <li>API URL (pruebas o producción)</li>
+                                </ul>
+                                <p>Revisa la pestaña <strong>"Documentos"</strong> para ver qué documentación necesitas proporcionar.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>¿Por qué el nombre del método de pago debe coincidir exactamente?</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p>La extensión detecta cuando un cliente selecciona el método de pago QR basándose en el nombre. Si no coincide exactamente (incluyendo mayúsculas y minúsculas), la extensión no se activará.</p>
+                                <p><strong>Tip:</strong> Ve a <strong>Settings → Payments</strong> en Shopify y copia exactamente el nombre del método de pago manual que creaste.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="accordion-item">
+                        <div class="accordion-header" onclick="toggleAccordion(this)">
+                            <span>¿Necesito configurar en Thank You y Order Status por separado?</span>
+                        </div>
+                        <div class="accordion-content">
+                            <div class="accordion-body">
+                                <p><strong>No.</strong> Solo necesitas configurar una vez. El sistema sincroniza automáticamente los settings entre ambas extensiones gracias al almacenamiento compartido.</p>
+                                <p>Configura los settings cuando agregues el bloque a cualquier página, y funcionará en ambas automáticamente.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="section">
-            <h2>📋 Documentos Necesarios para Darse de Alta en Qhantuy</h2>
-            
-            <h3>1. Documentos de Identificación</h3>
-            <ul>
-                <li>Registro de Comercio/NIT (Registro tributario)</li>
-                <li>Cédula de Identidad o Pasaporte del representante legal</li>
-                <li>Poder legal (si aplica)</li>
-                <li>Constitución de la empresa (para empresas)</li>
-            </ul>
-
-            <h3>2. Documentos Bancarios</h3>
-            <ul>
-                <li>Cuenta bancaria activa (comprobante)</li>
-                <li>Estado de cuenta (últimos 3 meses)</li>
-                <li>Datos de cuenta para recibir pagos</li>
-            </ul>
-
-            <h3>3. Documentos del Negocio</h3>
-            <ul>
-                <li>Certificado de registro de marca (si aplica)</li>
-                <li>Licencia de funcionamiento (si es requerida)</li>
-                <li>Catálogo de productos/servicios</li>
-            </ul>
-
-            <h3>4. Información de Contacto</h3>
-            <ul>
-                <li>Email corporativo</li>
-                <li>Teléfono de contacto</li>
-                <li>Dirección fiscal/comercial</li>
-            </ul>
-        </div>
-
-        <div class="section">
-            <h2>🔑 Credenciales que Proporciona Qhantuy</h2>
-            
-            <p>Una vez aprobada tu solicitud, Qhantuy te proporcionará las siguientes credenciales que debes configurar en la extensión:</p>
-
-            <div class="credentials-box">
-                <h4>1. X-API-Token (Token de Autenticación)</h4>
-                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy API Token</code></p>
-                <p><strong>Ejemplo:</strong> <code>abc123def456ghi789jkl012mno345pqr678stu901vwx234yz</code></p>
-                <p>Token único para autenticar todas las peticiones a la API de Qhantuy.</p>
-            </div>
-
-            <div class="credentials-box">
-                <h4>2. AppKey (Clave de Aplicación)</h4>
-                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy AppKey</code></p>
-                <p><strong>Formato:</strong> Exactamente <strong>64 caracteres</strong> hexadecimales</p>
-                <p><strong>Ejemplo:</strong> <code>0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef</code></p>
-                <p>Clave que identifica tu cuenta de comerciante en Qhantuy.</p>
-            </div>
-
-            <div class="credentials-box">
-                <h4>3. API URL (URL del Endpoint)</h4>
-                <p><strong>Dónde configurarlo:</strong> Extension Settings → <code>Qhantuy API URL</code></p>
-                <p><strong>Ambiente de Pruebas:</strong> <code>https://testingcheckout.qhantuy.com/external-api</code></p>
-                <p><strong>Ambiente de Producción:</strong> <code>https://checkout.qhantuy.com/external-api</code></p>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>⚙️ Cómo Configurar en Shopify</h2>
-
-            <div class="step">
-                <span class="step-number">1</span>
-                <strong>Acceder a Extension Settings</strong>
-                <p>Ve a tu Shopify Admin → Apps → QPOS Validator → Settings</p>
-            </div>
-
-            <div class="step">
-                <span class="step-number">2</span>
-                <strong>Configurar Campos Requeridos</strong>
-                <p>Ingresa las credenciales que recibiste de Qhantuy:</p>
-                <ul style="margin-top: 10px;">
-                    <li><strong>Qhantuy API Token:</strong> Pega el X-API-Token</li>
-                    <li><strong>Qhantuy AppKey:</strong> Pega el AppKey de 64 caracteres</li>
-                    <li><strong>Qhantuy API URL:</strong> URL del ambiente (pruebas o producción)</li>
-                    <li><strong>Nombre del Método de Pago:</strong> Nombre exacto del método de pago manual en tu tienda</li>
-                </ul>
-            </div>
-
-            <div class="step">
-                <span class="step-number">3</span>
-                <strong>Verificar Configuración</strong>
-                <p>Haz un pedido de prueba para verificar que todo funciona correctamente.</p>
-            </div>
-
-            <div class="important">
-                <strong>⚠️ Importante:</strong> El nombre del método de pago debe coincidir <strong>exactamente</strong> 
-                con el nombre del método de pago manual configurado en tu tienda Shopify.
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>📞 Contacto con Qhantuy</h2>
-            <p>Para obtener tus credenciales o resolver dudas sobre el servicio:</p>
-            <ul>
-                <li>Contacta a Qhantuy para registrarte como comerciante</li>
-                <li>Solicita acceso a la API de pagos QR</li>
-                <li>Proporciona los documentos requeridos listados arriba</li>
-            </ul>
-        </div>
-
-        <div class="footer">
-            <p>Esta es una Custom UI Extension. Los clientes verán la validación de pagos QR en las páginas de checkout.</p>
-            <p style="margin-top: 10px;">Para más información, consulta la documentación completa en el repositorio del proyecto.</p>
-        </div>
     </div>
+    
+    <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById('tab-' + tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        // Accordion toggle
+        function toggleAccordion(header) {
+            const item = header.parentElement;
+            const isOpen = item.classList.contains('open');
+            
+            // Close all accordions in the same container
+            const container = item.parentElement;
+            container.querySelectorAll('.accordion-item').forEach(acc => {
+                acc.classList.remove('open');
+            });
+            
+            // Toggle clicked item
+            if (!isOpen) {
+                item.classList.add('open');
+            }
+        }
+    </script>
 </body>
 </html>`);
     }
