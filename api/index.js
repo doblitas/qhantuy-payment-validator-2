@@ -1,48 +1,35 @@
 /**
- * Sanitize shop domain (simple version)
+ * Vercel Serverless Function
+ * GET / (raíz)
+ * Versión ultra-simple para evitar crashes
  */
-function sanitizeShop(shop, addMyShopifyDomain = false) {
-  if (!shop) return null;
-  
+export default async function handler(req, res) {
   try {
-    let domain = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'];
     
-    if (addMyShopifyDomain && !domain.includes('.myshopify.com')) {
-      const shopName = domain.split('.')[0].toLowerCase();
-      domain = `${shopName}.myshopify.com`;
+    // Si viene con shop, redirigir a OAuth
+    if (shopParam) {
+      // Sanitizar shop de forma simple
+      let shopDomain = String(shopParam).trim().toLowerCase();
+      shopDomain = shopDomain.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      // Asegurar que tenga .myshopify.com
+      if (!shopDomain.includes('.myshopify.com')) {
+        const shopName = shopDomain.split('.')[0].replace(/[^a-z0-9-]/g, '');
+        shopDomain = `${shopName}.myshopify.com`;
+      }
+      
+      // Redirigir a OAuth
+      return res.redirect(302, `/api/auth?shop=${encodeURIComponent(shopDomain)}`);
     }
     
-    return domain.toLowerCase();
-  } catch (error) {
-    console.error('Error sanitizing shop:', error);
-    return null;
-  }
-}
-
-/**
- * Get access token (safe wrapper)
- */
-async function getAccessTokenSafe(shopDomain) {
-  try {
-    // Dynamic import para evitar errores si storage.js no está disponible
-    const { getAccessToken } = await import('../web/backend/storage.js');
-    return await getAccessToken(shopDomain);
-  } catch (error) {
-    console.error('Error importing or calling getAccessToken:', error);
-    return null;
-  }
-}
-
-/**
- * Simple HTML response
- */
-function getSimpleHTML(title, message) {
-  return `<!DOCTYPE html>
+    // Sin parámetros, página de bienvenida simple
+    res.status(200).send(`<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${title}</title>
+    <title>Qhantuy Payment Validator</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -60,6 +47,7 @@ function getSimpleHTML(title, message) {
             padding: 40px;
             max-width: 600px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            text-align: center;
         }
         h1 { color: #333; margin-bottom: 20px; }
         p { color: #666; line-height: 1.6; }
@@ -67,46 +55,22 @@ function getSimpleHTML(title, message) {
 </head>
 <body>
     <div class="container">
-        <h1>${title}</h1>
-        <p>${message}</p>
+        <h1>Qhantuy Payment Validator</h1>
+        <p>Validación de Pagos QR para Shopify - Custom UI Extension</p>
     </div>
 </body>
-</html>`;
-}
-
-/**
- * Vercel Serverless Function
- * GET / (raíz)
- */
-export default async function handler(req, res) {
-  try {
-    const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'];
-    const hostParam = req.query.host;
-    
-    // Si viene con shop, redirigir directamente a OAuth
-    // (No verificamos token para evitar errores)
-    if (shopParam) {
-      const shopDomain = sanitizeShop(shopParam, true);
-      if (shopDomain) {
-        // Redirigir a OAuth - OAuth manejará si la app ya está instalada
-        return res.redirect(302, `/api/auth?shop=${encodeURIComponent(shopDomain)}`);
-      }
-    }
-    
-    // Sin parámetros, página de bienvenida
-    return res.status(200).send(getSimpleHTML(
-      'Qhantuy Payment Validator',
-      'Validación de Pagos QR para Shopify - Custom UI Extension'
-    ));
+</html>`);
     
   } catch (error) {
-    console.error('Error in root handler:', error);
-    
-    // En caso de error, mostrar página de bienvenida (sin error)
-    return res.status(200).send(getSimpleHTML(
-      'Qhantuy Payment Validator',
-      'Validación de Pagos QR para Shopify - Custom UI Extension'
-    ));
+    // Si hay cualquier error, devolver página simple
+    console.error('Error:', error);
+    res.status(200).send(`<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Error</title></head>
+<body style="font-family: sans-serif; padding: 40px; text-align: center;">
+    <h1>Error</h1>
+    <p>Hubo un error al cargar la aplicación.</p>
+</body>
+</html>`);
   }
 }
-
