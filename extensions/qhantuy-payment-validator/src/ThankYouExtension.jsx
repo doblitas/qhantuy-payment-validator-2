@@ -193,7 +193,7 @@ function QhantuPaymentValidatorThankYou() {
     const timer = setTimeout(verifyConnections, 1000);
     
     return () => clearTimeout(timer);
-  }, [shop, settingsRaw, settings]);
+  }, [shop, settingsRaw, formattedSettings]);
   
   // Efecto para obtener total amount
   useEffect(() => {
