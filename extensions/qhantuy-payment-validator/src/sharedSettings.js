@@ -69,7 +69,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       payment_gateway_name: sharedSettings?.payment_gateway_name || 'Pago QR Manual',
       check_interval: sharedSettings?.check_interval || 5,
       max_check_duration: sharedSettings?.max_check_duration || 30,
-      backend_api_url: sharedSettings?.backend_api_url || 'https://qhantuy-payment-validator.vercel.app',
+      backend_api_url: sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
       source: sharedSettings?.source || 'default',
       lastConfigured: sharedSettings?.lastConfigured || null,
       lastUpdated: sharedSettings?.lastUpdated || null
