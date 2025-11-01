@@ -67,6 +67,8 @@ function QhantuPaymentValidatorOrderStatus() {
   const apiToken = settings.qhantuy_api_token || settings.current?.qhantuy_api_token || '';
   const appkey = settings.qhantuy_appkey || settings.current?.qhantuy_appkey || '';
   const paymentGatewayName = settings.payment_gateway_name || settings.current?.payment_gateway_name || 'Pago QR Manual';
+  const checkInterval = (settings.check_interval || settings.current?.check_interval || 5) * 1000; // Convertir a milisegundos (default: 5 segundos)
+  const maxCheckDuration = (settings.max_check_duration || settings.current?.max_check_duration || 30) * 60 * 1000; // Convertir a milisegundos (default: 30 minutos)
   
   // Debug: Log los valores extraídos
   useEffect(() => {
@@ -97,7 +99,7 @@ function QhantuPaymentValidatorOrderStatus() {
         const backendApiUrl = settingsRaw?.backend_api_url || 
                            settingsRaw?.current?.backend_api_url ||
                            settings?.backend_api_url ||
-                           'https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app';
+                           'https://qhantuy-payment-backend.vercel.app';
         
         const verifyUrl = `${backendApiUrl.replace(/\/$/, '')}/api/verify?shop=${shopDomain}`;
         
@@ -740,7 +742,7 @@ function QhantuPaymentValidatorOrderStatus() {
         payment_method: 'QRSIMPLE',
         image_method: 'URL',
         detail: detail,
-        callback_url: 'https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app/api/qhantuy/callback',
+        callback_url: 'https://qhantuy-payment-backend.vercel.app/api/qhantuy/callback',
         return_url: `https://${shop.myshopifyDomain}/tools/order_status/${id}`,
         items: items
       };
@@ -1129,7 +1131,7 @@ function QhantuPaymentValidatorOrderStatus() {
       const backendApiUrl = settingsRaw?.backend_api_url || 
                            settingsRaw?.current?.backend_api_url ||
                            settings?.backend_api_url ||
-                           'https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app';
+                           'https://qhantuy-payment-backend.vercel.app';
       
       // Construir la URL completa del endpoint
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
@@ -1188,7 +1190,7 @@ function QhantuPaymentValidatorOrderStatus() {
               const backendApiUrl = settingsRaw?.backend_api_url || 
                                    settingsRaw?.current?.backend_api_url ||
                                    settings?.backend_api_url ||
-                                   'https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app';
+                                   'https://qhantuy-payment-backend.vercel.app';
               
               const apiEndpointUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/confirm-payment`;
               
@@ -1237,6 +1239,37 @@ function QhantuPaymentValidatorOrderStatus() {
       setIsChecking(false);
     }
   }, [transactionId, apiUrl, apiToken, appkey, storage, isChecking, getOrderIdentifiers, shop]);
+  
+  // Polling automático: verificar el estado del pago cada X segundos cuando está pendiente
+  useEffect(() => {
+    // Solo hacer polling si:
+    // 1. El estado es 'pending' (pago pendiente)
+    // 2. Tenemos un transactionId
+    // 3. No estamos verificando actualmente
+    if (paymentStatus !== 'pending' || !transactionId || isChecking) {
+      return;
+    }
+
+    console.log('🔄 Iniciando polling automático para verificar pago cada', checkInterval / 1000, 'segundos (OrderStatus)');
+
+    // Crear intervalo de verificación
+    const pollingInterval = setInterval(() => {
+      console.log('🔄 Polling automático: verificando estado del pago... (OrderStatus)');
+      checkPaymentStatus();
+    }, checkInterval);
+
+    // Timeout máximo: dejar de verificar después de maxCheckDuration
+    const maxTimeout = setTimeout(() => {
+      console.log('⏱️ Tiempo máximo de verificación alcanzado (OrderStatus)');
+      clearInterval(pollingInterval);
+    }, maxCheckDuration);
+
+    // Cleanup al desmontar o cambiar estado
+    return () => {
+      clearInterval(pollingInterval);
+      clearTimeout(maxTimeout);
+    };
+  }, [paymentStatus, transactionId, isChecking, checkInterval, maxCheckDuration, checkPaymentStatus]);
   
   // No mostrar si no es pago manual
   const shouldShow = !!paymentGatewayName;
