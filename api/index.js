@@ -54,46 +54,53 @@ export default async function handler(req, res) {
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #f5f5f5;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: #f6f6f7;
             margin: 0;
-            padding: 20px;
-            line-height: 1.6;
+            padding: 0;
+            line-height: 1.5;
+            color: #202223;
         }
         .container {
             background: white;
-            border-radius: 12px;
-            padding: 40px;
-            max-width: 900px;
+            padding: 32px;
+            max-width: 960px;
             margin: 0 auto;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            min-height: 100vh;
         }
         h1 { 
-            color: #333; 
-            margin-bottom: 10px;
-            font-size: 28px;
+            color: #202223; 
+            margin-bottom: 8px;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
         }
         .subtitle {
-            color: #666;
-            margin-bottom: 30px;
-            font-size: 16px;
+            color: #6d7175;
+            margin-bottom: 24px;
+            font-size: 14px;
+            font-weight: 400;
         }
         .shop-info {
-            background: #f8f9fa;
-            padding: 15px;
+            background: #f6f6f7;
+            padding: 16px;
             border-radius: 8px;
-            margin-bottom: 30px;
-            border-left: 4px solid #007bff;
+            margin-bottom: 24px;
+            font-size: 14px;
+            color: #6d7175;
+            border: 1px solid #e1e3e5;
         }
         .section {
-            margin-bottom: 40px;
+            margin-bottom: 32px;
         }
         .section h2 {
-            color: #333;
-            font-size: 22px;
-            margin-bottom: 15px;
-            padding-bottom: 10px;
-            border-bottom: 2px solid #e9ecef;
+            color: #202223;
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e1e3e5;
+            letter-spacing: -0.01em;
         }
         .section h3 {
             color: #495057;
@@ -218,34 +225,37 @@ export default async function handler(req, res) {
             border-left: 4px solid;
         }
         .checklist-item.configured {
-            border-left-color: #28a745;
-            background: #d4edda;
+            border-left-color: #008060;
+            background: #f0fdf4;
         }
         .checklist-item.not-configured {
-            border-left-color: #ffc107;
-            background: #fff3cd;
+            border-left-color: #d4a574;
+            background: #fefaf6;
         }
         .checklist-item.unknown {
-            border-left-color: #6c757d;
-            background: #e9ecef;
+            border-left-color: #8c9196;
+            background: #f9fafb;
         }
         .checklist-item-icon {
-            font-size: 20px;
+            font-size: 16px;
             margin-right: 12px;
-            min-width: 24px;
+            min-width: 20px;
+            color: #202223;
+            font-weight: 600;
         }
         .checklist-item-content {
             flex: 1;
         }
         .checklist-item-title {
-            font-weight: bold;
-            margin-bottom: 4px;
-            color: #333;
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #202223;
+            font-size: 15px;
         }
         .checklist-item-note {
-            font-size: 13px;
-            color: #666;
-            font-style: italic;
+            font-size: 14px;
+            color: #6d7175;
+            line-height: 1.5;
         }
         .checklist-item-required {
             font-size: 11px;
@@ -268,33 +278,34 @@ export default async function handler(req, res) {
         }
         /* Tabs System */
         .tabs-container {
-            margin-top: 30px;
+            margin-top: 24px;
         }
         .tabs-header {
             display: flex;
-            border-bottom: 2px solid #e0e0e0;
-            margin-bottom: 20px;
+            border-bottom: 1px solid #e1e3e5;
+            margin-bottom: 24px;
             gap: 0;
         }
         .tab-button {
-            padding: 12px 24px;
+            padding: 12px 20px;
             background: transparent;
             border: none;
-            border-bottom: 3px solid transparent;
+            border-bottom: 2px solid transparent;
             cursor: pointer;
             font-size: 14px;
-            font-weight: 600;
-            color: #666;
-            transition: all 0.2s;
-            margin-bottom: -2px;
+            font-weight: 500;
+            color: #6d7175;
+            transition: all 0.15s ease;
+            margin-bottom: -1px;
         }
         .tab-button:hover {
-            color: #007bff;
-            background: #f8f9fa;
+            color: #202223;
+            background: #f6f6f7;
         }
         .tab-button.active {
-            color: #007bff;
-            border-bottom-color: #007bff;
+            color: #202223;
+            border-bottom-color: #202223;
+            font-weight: 600;
         }
         .tab-content {
             display: none;
@@ -309,30 +320,32 @@ export default async function handler(req, res) {
         }
         /* Accordion for nested content */
         .accordion-item {
-            border: 1px solid #e0e0e0;
-            border-radius: 6px;
-            margin-bottom: 10px;
+            border: 1px solid #e1e3e5;
+            border-radius: 8px;
+            margin-bottom: 12px;
             overflow: hidden;
         }
         .accordion-header {
-            padding: 14px 16px;
-            background: #f8f9fa;
+            padding: 16px;
+            background: #f6f6f7;
             cursor: pointer;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-weight: 600;
-            color: #333;
-            transition: background 0.2s;
+            font-weight: 500;
+            color: #202223;
+            font-size: 14px;
+            transition: background 0.15s ease;
         }
         .accordion-header:hover {
-            background: #e9ecef;
+            background: #eceeef;
         }
         .accordion-header::after {
             content: '▼';
-            font-size: 12px;
-            color: #666;
-            transition: transform 0.2s;
+            font-size: 10px;
+            color: #6d7175;
+            transition: transform 0.2s ease;
+            margin-left: 12px;
         }
         .accordion-item.open .accordion-header::after {
             transform: rotate(180deg);
@@ -348,13 +361,34 @@ export default async function handler(req, res) {
         .accordion-body {
             padding: 16px;
             background: white;
+            font-size: 14px;
+            color: #6d7175;
+            line-height: 1.6;
+        }
+        .accordion-body p {
+            margin-bottom: 12px;
+        }
+        .accordion-body ul {
+            margin-left: 20px;
+            margin-top: 8px;
+        }
+        .accordion-body li {
+            margin-bottom: 6px;
+        }
+        .accordion-body code {
+            background: #f6f6f7;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+            color: #202223;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔧 QPOS Validator</h1>
-        <p class="subtitle">Guía de Configuración e Información del Servicio</p>
+        <h1>QPOS Validator</h1>
+        <p class="subtitle">Configuración e información del servicio</p>
         
         <div class="shop-info" style="margin-bottom: 20px;">
             <strong>Tienda:</strong> ${shopDomain}
@@ -363,59 +397,59 @@ export default async function handler(req, res) {
         <!-- Tabs Navigation -->
         <div class="tabs-container">
             <div class="tabs-header">
-                <button class="tab-button active" onclick="switchTab('config')">⚙️ Configuración</button>
-                <button class="tab-button" onclick="switchTab('credentials')">🔑 Credenciales</button>
-                <button class="tab-button" onclick="switchTab('documents')">📋 Documentos</button>
-                <button class="tab-button" onclick="switchTab('help')">❓ Ayuda</button>
+                <button class="tab-button active" onclick="switchTab('config')">Configuración</button>
+                <button class="tab-button" onclick="switchTab('credentials')">Credenciales</button>
+                <button class="tab-button" onclick="switchTab('documents')">Documentos</button>
+                <button class="tab-button" onclick="switchTab('help')">Ayuda</button>
             </div>
 
             <!-- Tab 1: Configuración -->
             <div id="tab-config" class="tab-content active">
                 <div class="section">
-                    <h2 style="margin-top: 0;">✅ Estado de Configuración</h2>
+                    <h2 style="margin-top: 0;">Estado de configuración</h2>
                     
                     <!-- OAuth -->
                     <div class="checklist-item configured">
-                        <span class="checklist-item-icon">✅</span>
+                        <span class="checklist-item-icon">✓</span>
                         <div class="checklist-item-content">
-                            <div class="checklist-item-title">1. App Instalada</div>
+                            <div class="checklist-item-title">App instalada</div>
                             <div class="checklist-item-note">La app está instalada correctamente en Shopify.</div>
                         </div>
                     </div>
 
                     <!-- Extension Settings -->
                     <div class="checklist-item unknown">
-                        <span class="checklist-item-icon">❓</span>
+                        <span class="checklist-item-icon">?</span>
                         <div class="checklist-item-content">
-                            <div class="checklist-item-title">2. Extension Settings (Credenciales Qhantuy)</div>
-                            <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere configuración</div>
-                            <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
-                                <strong>📍 Cómo agregar y configurar:</strong><br><br>
-                                <strong>Paso 1:</strong> Ve a <strong>Shopify Admin → Online Store → Themes → Customize</strong><br>
-                                <strong>Paso 2:</strong> En la barra lateral izquierda, busca <strong>"Apps"</strong> → haz clic en <strong>"All"</strong><br>
-                                <strong>Paso 3:</strong> Busca <strong>"QPOS Validator"</strong> y haz clic en el botón <strong>+</strong> (azul con signo más)<br>
-                                <strong>Paso 4:</strong> Selecciona dónde agregarlo:
-                                <ul style="margin-left: 20px; margin-top: 5px;">
-                                    <li><strong>"Thank you"</strong> - Para la página de confirmación de pedido</li>
-                                    <li><strong>"Order status"</strong> - Para la página de estado del pedido</li>
+                            <div class="checklist-item-title">Extension settings (Credenciales Qhantuy)</div>
+                            <div class="checklist-item-note" style="color: #202223; font-weight: 500;">Requiere configuración</div>
+                            <div class="checklist-item-note" style="margin-top: 8px; padding: 16px; background: #f6f6f7; border-left: 3px solid #008060; border-radius: 6px;">
+                                <strong style="color: #202223; font-size: 14px; display: block; margin-bottom: 12px;">Cómo agregar y configurar:</strong>
+                                <div style="margin-bottom: 10px;"><strong>Paso 1:</strong> Ve a <strong>Shopify Admin → Online Store → Themes → Customize</strong></div>
+                                <div style="margin-bottom: 10px;"><strong>Paso 2:</strong> En la barra lateral izquierda, busca <strong>"Apps"</strong> → haz clic en <strong>"All"</strong></div>
+                                <div style="margin-bottom: 10px;"><strong>Paso 3:</strong> Busca <strong>"QPOS Validator"</strong> y haz clic en el botón <strong>+</strong> (azul con signo más)</div>
+                                <div style="margin-bottom: 10px;"><strong>Paso 4:</strong> Selecciona dónde agregarlo:</div>
+                                <ul style="margin-left: 24px; margin-bottom: 10px; margin-top: 6px;">
+                                    <li><strong>"Thank you"</strong> — Para la página de confirmación de pedido</li>
+                                    <li><strong>"Order status"</strong> — Para la página de estado del pedido</li>
                                 </ul>
-                                <strong>Paso 5:</strong> Una vez agregado, haz clic en el bloque <strong>"QPOS Validator"</strong> en el editor<br>
-                                <strong>Paso 6:</strong> En el panel derecho, completa los campos requeridos (ver pestaña "Credenciales")<br>
-                                <strong>Paso 7:</strong> Guarda los cambios<br><br>
-                                <em style="font-size: 12px; padding: 8px; background: #fff3cd; border-radius: 4px; display: block;">
-                                    💡 <strong>Importante:</strong> Puedes agregar el bloque a ambas páginas (Thank you y Order status). Solo necesitas configurar los settings una vez - se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.
-                                </em>
+                                <div style="margin-bottom: 10px;"><strong>Paso 5:</strong> Una vez agregado, haz clic en el bloque <strong>"QPOS Validator"</strong> en el editor</div>
+                                <div style="margin-bottom: 10px;"><strong>Paso 6:</strong> En el panel derecho, completa los campos requeridos (ver pestaña "Credenciales")</div>
+                                <div style="margin-bottom: 12px;"><strong>Paso 7:</strong> Guarda los cambios</div>
+                                <div style="padding: 12px; background: #fefaf6; border-radius: 6px; border-left: 3px solid #d4a574; margin-top: 12px; font-size: 13px; color: #6d7175;">
+                                    <strong style="color: #202223;">Nota:</strong> Puedes agregar el bloque a ambas páginas (Thank you y Order status). Solo necesitas configurar los settings una vez — se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.
+                                </div>
                             </div>
                         </div>
                     </div>
 
                     <!-- Resumen rápido -->
-                    <div style="margin-top: 25px; padding: 20px; background: #e7f3ff; border-radius: 8px; border-left: 4px solid #007bff;">
-                        <h3 style="margin-top: 0; color: #004085; font-size: 18px;">📊 Resumen</h3>
-                        <p style="margin-bottom: 12px;"><strong>Para procesar pagos QR necesitas:</strong></p>
-                        <ul style="margin-left: 20px; margin-bottom: 0;">
-                            <li><strong>✅ App instalada</strong> - Completado</li>
-                            <li><strong>❓ Extension Settings</strong> - Agrega el bloque en Customize → Apps y configura las credenciales</li>
+                    <div style="margin-top: 24px; padding: 20px; background: #f6f6f7; border-radius: 8px; border: 1px solid #e1e3e5;">
+                        <h3 style="margin-top: 0; color: #202223; font-size: 16px; font-weight: 600; margin-bottom: 12px;">Resumen</h3>
+                        <p style="margin-bottom: 12px; color: #6d7175; font-size: 14px;"><strong style="color: #202223;">Para procesar pagos QR necesitas:</strong></p>
+                        <ul style="margin-left: 20px; margin-bottom: 0; color: #6d7175; font-size: 14px;">
+                            <li style="margin-bottom: 6px;"><strong style="color: #008060;">App instalada</strong> — Completado</li>
+                            <li style="margin-bottom: 0;"><strong style="color: #202223;">Extension settings</strong> — Agrega el bloque en Customize → Apps y configura las credenciales</li>
                         </ul>
                     </div>
                 </div>
@@ -424,7 +458,7 @@ export default async function handler(req, res) {
             <!-- Tab 2: Credenciales -->
             <div id="tab-credentials" class="tab-content">
                 <div class="section">
-                    <h2 style="margin-top: 0;">🔑 Credenciales de Qhantuy</h2>
+                    <h2 style="margin-top: 0;">Credenciales de Qhantuy</h2>
                     <p>Estas son las credenciales que Qhantuy te proporcionará después de aprobar tu solicitud:</p>
                     
                     <div class="accordion-item">
@@ -486,11 +520,11 @@ export default async function handler(req, res) {
             <!-- Tab 3: Documentos -->
             <div id="tab-documents" class="tab-content">
                 <div class="section">
-                    <h2 style="margin-top: 0;">📋 Documentos Necesarios para Registrarse en Qhantuy</h2>
+                    <h2 style="margin-top: 0;">Documentos necesarios para registrarse en Qhantuy</h2>
                     
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
-                            <span>📄 Documentos de Identificación</span>
+                            <span>Documentos de identificación</span>
                         </div>
                         <div class="accordion-content">
                             <div class="accordion-body">
@@ -506,7 +540,7 @@ export default async function handler(req, res) {
 
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
-                            <span>🏦 Documentos Bancarios</span>
+                            <span>Documentos bancarios</span>
                         </div>
                         <div class="accordion-content">
                             <div class="accordion-body">
@@ -521,7 +555,7 @@ export default async function handler(req, res) {
 
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
-                            <span>🏢 Documentos del Negocio</span>
+                            <span>Documentos del negocio</span>
                         </div>
                         <div class="accordion-content">
                             <div class="accordion-body">
@@ -536,7 +570,7 @@ export default async function handler(req, res) {
 
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
-                            <span>📧 Información de Contacto</span>
+                            <span>Información de contacto</span>
                         </div>
                         <div class="accordion-content">
                             <div class="accordion-body">
@@ -554,7 +588,7 @@ export default async function handler(req, res) {
             <!-- Tab 4: Ayuda -->
             <div id="tab-help" class="tab-content">
                 <div class="section">
-                    <h2 style="margin-top: 0;">❓ Preguntas Frecuentes</h2>
+                    <h2 style="margin-top: 0;">Preguntas frecuentes</h2>
                     
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
@@ -575,7 +609,7 @@ export default async function handler(req, res) {
                                 <p><strong>Paso 6:</strong> En el panel derecho aparecerán los campos de configuración (Block settings)</p>
                                 <p><strong>Paso 7:</strong> Completa los campos requeridos con tus credenciales de Qhantuy (ver pestaña "Credenciales")</p>
                                 <p><strong>Paso 8:</strong> Guarda los cambios</p>
-                                <p><em>💡 Puedes agregar el bloque a ambas páginas. Solo necesitas configurar los settings una vez - se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.</em></p>
+                                <p style="margin-top: 12px; padding: 12px; background: #fefaf6; border-radius: 6px; border-left: 3px solid #d4a574; color: #6d7175; font-size: 13px;"><strong style="color: #202223;">Nota:</strong> Puedes agregar el bloque a ambas páginas. Solo necesitas configurar los settings una vez — se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.</p>
                             </div>
                         </div>
                     </div>
