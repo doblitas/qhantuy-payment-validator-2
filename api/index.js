@@ -307,8 +307,14 @@ export default async function handler(req, res) {
                 <div class="checklist-item-content">
                     <div class="checklist-item-title">3. Extension Settings (Credenciales Qhantuy)</div>
                     <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere verificación manual</div>
-                    <div class="checklist-item-note" style="margin-top: 8px;">
-                        <strong>Dónde verificar:</strong> Shopify Admin → Apps → Qhantuy Payment Validator → Settings
+                    <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
+                        <strong>📍 Dónde configurar:</strong><br>
+                        <strong>1.</strong> Ve a <strong>Shopify Admin</strong><br>
+                        <strong>2.</strong> Navega a <strong>Settings → Checkout</strong><br>
+                        <strong>3.</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"Qhantuy QR Payment Validator"</strong><br>
+                        <strong>4.</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
+                        <strong>5.</strong> Configura los campos requeridos una sola vez - se compartirán entre Thank You y Order Status pages<br><br>
+                        <em style="font-size: 12px;">💡 Nota: Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.</em>
                     </div>
                     <div class="checklist-item-required" style="margin-top: 10px;">Campos Requeridos:</div>
                     <ul class="checklist-fields">
@@ -356,8 +362,9 @@ export default async function handler(req, res) {
                     </li>
                 </ul>
                 <p style="margin-top: 15px; margin-bottom: 0;">
-                    <strong>💡 Próximo paso:</strong> Ve a <strong>Shopify Admin → Apps → Qhantuy Payment Validator → Settings</strong> 
-                    y verifica que todos los campos requeridos estén completos con tus credenciales de Qhantuy.
+                    <strong>💡 Próximo paso:</strong> Ve a <strong>Settings → Checkout</strong> en Shopify Admin, busca 
+                    <strong>"Qhantuy QR Payment Validator"</strong> y configura los campos requeridos una sola vez. 
+                    Los settings se sincronizarán automáticamente entre Thank You y Order Status pages.
                 </p>
             </div>
         </div>

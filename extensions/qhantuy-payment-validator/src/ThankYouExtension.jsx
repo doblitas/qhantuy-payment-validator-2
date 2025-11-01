@@ -12,6 +12,7 @@ import {
   useSettings,
   useStorage,
 } from '@shopify/ui-extensions-react/checkout';
+import { syncSharedSettings, formatSettings } from './sharedSettings.js';
 
 function QhantuPaymentValidatorThankYou() {
   const api = useExtensionApi();
@@ -64,22 +65,55 @@ function QhantuPaymentValidatorThankYou() {
   const MAX_RETRY_DELAY = 5000; // Delay máximo en ms (5 segundos)
   const TOTAL_TIMEOUT = 30000; // Timeout total en ms (30 segundos)
   
-  // Configuración del merchant - intentar diferentes formas de acceder a settings
-  // En algunas versiones, settings puede ser un objeto reactivo o tener estructura diferente
-  const settings = settingsRaw || {};
-  
-  // Acceder a settings de forma flexible
-  const apiUrl = settings.qhantuy_api_url || settings.current?.qhantuy_api_url || 'https://checkout.qhantuy.com/external-api';
-  const apiToken = settings.qhantuy_api_token || settings.current?.qhantuy_api_token || '';
-  const appkey = settings.qhantuy_appkey || settings.current?.qhantuy_appkey || '';
-  const paymentGatewayName = settings.payment_gateway_name || settings.current?.payment_gateway_name || 'Pago QR Manual';
-  const checkInterval = (settings.check_interval || settings.current?.check_interval || 5) * 1000; // Convertir a milisegundos (default: 5 segundos)
-  const maxCheckDuration = (settings.max_check_duration || settings.current?.max_check_duration || 30) * 60 * 1000; // Convertir a milisegundos (default: 30 minutos)
-  
-  // Debug: Log los valores extraídos
+  // Estado para settings sincronizados entre extensiones
+  const [mergedSettings, setMergedSettings] = useState(null);
+  const [formattedSettings, setFormattedSettings] = useState({
+    apiUrl: 'https://checkout.qhantuy.com/external-api',
+    apiToken: '',
+    appkey: '',
+    paymentGatewayName: 'Pago QR Manual',
+    checkInterval: 5000,
+    maxCheckDuration: 1800000,
+    backendApiUrl: 'https://qhantuy-payment-backend.vercel.app',
+    hasConfiguredSettings: false
+  });
+
+  // Sincronizar settings entre extensiones al cargar
   useEffect(() => {
-    console.log('Extracted settings:', { apiUrl, apiToken: apiToken ? '***' : 'empty', appkey: appkey ? '***' : 'empty', paymentGatewayName });
-  }, [apiUrl, apiToken, appkey, paymentGatewayName]);
+    const syncSettings = async () => {
+      try {
+        const synced = await syncSharedSettings(settingsRaw, storage, 'thankyou');
+        setMergedSettings(synced);
+        const formatted = formatSettings(synced);
+        setFormattedSettings(formatted);
+        console.log('✅ Settings sincronizados (ThankYou):', {
+          hasToken: !!formatted.apiToken,
+          hasAppkey: !!formatted.appkey,
+          source: formatted.source,
+          fromShared: synced.source !== 'thankyou'
+        });
+      } catch (error) {
+        console.error('Error sincronizando settings:', error);
+        // Fallback a settings directos
+        const settings = settingsRaw || {};
+        const fallback = formatSettings({
+          qhantuy_api_url: settings.qhantuy_api_url || settings.current?.qhantuy_api_url,
+          qhantuy_api_token: settings.qhantuy_api_token || settings.current?.qhantuy_api_token,
+          qhantuy_appkey: settings.qhantuy_appkey || settings.current?.qhantuy_appkey,
+          payment_gateway_name: settings.payment_gateway_name || settings.current?.payment_gateway_name,
+          check_interval: settings.check_interval || settings.current?.check_interval,
+          max_check_duration: settings.max_check_duration || settings.current?.max_check_duration,
+          backend_api_url: settings.backend_api_url || settings.current?.backend_api_url
+        });
+        setFormattedSettings(fallback);
+      }
+    };
+    
+    syncSettings();
+  }, [settingsRaw, storage]);
+
+  // Usar settings formateados
+  const { apiUrl, apiToken, appkey, paymentGatewayName, checkInterval, maxCheckDuration, backendApiUrl, hasConfiguredSettings } = formattedSettings;
   
   // Verificar si faltan configuraciones requeridas
   const missingConfig = !apiToken || !appkey;
@@ -102,12 +136,8 @@ function QhantuPaymentValidatorThankYou() {
           return;
         }
 
-        const backendApiUrl = settingsRaw?.backend_api_url || 
-                           settingsRaw?.current?.backend_api_url ||
-                           settings?.backend_api_url ||
-                           'https://qhantuy-payment-backend.vercel.app';
-        
-        const verifyUrl = `${backendApiUrl.replace(/\/$/, '')}/api/verify?shop=${shopDomain}`;
+        // Usar backendApiUrl de formattedSettings (ya sincronizado)
+        const verifyUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/verify?shop=${shopDomain}`;
         
         console.log('🔍 Verifying connections:', verifyUrl);
         
@@ -134,7 +164,7 @@ function QhantuPaymentValidatorThankYou() {
           if (!data.ready) {
             console.warn('⚠️ Backend not ready:', data.verification);
             if (!data.verification?.checks?.oauth_token) {
-              console.warn('📝 OAuth token not found. Install the app at:', `${backendApiUrl}/auth?shop=${shopDomain}`);
+              console.warn('📝 OAuth token not found. Install the app at:', `${formattedSettings.backendApiUrl}/auth?shop=${shopDomain}`);
             }
           } else {
             console.log('✅ All connections verified successfully');
@@ -1132,11 +1162,8 @@ function QhantuPaymentValidatorThankYou() {
       // El backend hace la llamada a la API de Qhantuy
       const shopDomain = shop?.myshopifyDomain || shop?.domain;
       
-      // Obtener backend_api_url desde settings o usar el valor por defecto
-      const backendApiUrl = settingsRaw?.backend_api_url || 
-                           settingsRaw?.current?.backend_api_url ||
-                           settings?.backend_api_url ||
-                           'https://qhantuy-payment-backend.vercel.app';
+      // Usar backendApiUrl de formattedSettings (ya sincronizado)
+      const backendApiUrl = formattedSettings.backendApiUrl;
       
       // Construir la URL completa del endpoint
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
@@ -1192,12 +1219,8 @@ function QhantuPaymentValidatorThankYou() {
             
             if (orderId || orderNumber) {
               // Construir URL del backend API (con valor por defecto)
-              const backendApiUrl = settingsRaw?.backend_api_url || 
-                                   settingsRaw?.current?.backend_api_url ||
-                                   settings?.backend_api_url ||
-                                   'https://qhantuy-payment-backend.vercel.app';
-              
-              const apiEndpointUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/confirm-payment`;
+              // Usar backendApiUrl de formattedSettings (ya sincronizado)
+              const apiEndpointUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/confirm-payment`;
               
               console.log('Updating Shopify order:', { orderId, orderNumber, transactionId, apiEndpointUrl });
               
