@@ -44,26 +44,91 @@ export async function handleQhantuCallback(req, res) {
       });
     }
 
-    // Si no tenemos internal_code pero tenemos transaction_id, intentar buscarlo
-    // Esto es útil para test-callbacks donde solo viene el transactionID
+    // Si no tenemos internal_code pero tenemos transaction_id, consultar Qhantuy API
+    // Según documentación Qhantuy: usar transaction_id para obtener información del pago
     if (!internal_code && transaction_id) {
       console.log('⚠️  internal_code not provided. Transaction ID:', transaction_id);
-      console.log('ℹ️  Tip: Include internal_code parameter in callback URL or body');
-      console.log('    Format: /api/qhantuy/callback?transaction_id=XXX&internal_code=SHOPIFY-ORDER-XXX&status=success');
+      console.log('ℹ️  Consulting Qhantuy API with transaction_id to get internal_code...');
       
-      // Intentar extraer desde shop domain si está disponible
-      const shopDomain = req.query.shop || req.headers['x-shopify-shop-domain'];
-      if (shopDomain) {
-        console.log('ℹ️  Shop domain available:', shopDomain);
-        // Nota: Necesitaríamos buscar el pedido por transaction_id, pero eso requiere
-        // mantener un registro de transaction_id -> order_id. Por ahora, requerimos internal_code.
+      try {
+        // Consultar Qhantuy usando transaction_id para obtener el internal_code
+        const apiUrl = process.env.QHANTUY_API_URL || 'https://checkout.qhantuy.com/external-api';
+        const apiToken = process.env.QHANTUY_API_TOKEN;
+        const appkey = process.env.QHANTUY_APPKEY;
+
+        if (!apiToken || !appkey) {
+          console.error('❌ Qhantuy API credentials not configured');
+          return res.status(500).json({
+            success: false,
+            message: 'Qhantuy API credentials not configured. Cannot lookup transaction.',
+            tip: 'Configure QHANTUY_API_TOKEN and QHANTUY_APPKEY in Vercel environment variables'
+          });
+        }
+
+        // Opción 1: Intentar con servicio check-payments (por transaction_id/payment_ids)
+        console.log('🔍 Consulting Qhantuy check-payments service with transaction_id:', transaction_id);
+        const checkPaymentsResponse = await fetch(`${apiUrl}/check-payments`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-Token': apiToken
+          },
+          body: JSON.stringify({
+            appkey: appkey,
+            payment_ids: [transaction_id.toString()]
+          })
+        });
+
+        if (checkPaymentsResponse.ok) {
+          const checkPaymentsData = await checkPaymentsResponse.json();
+          console.log('✅ check-payments response:', checkPaymentsData);
+
+          if (checkPaymentsData.process && checkPaymentsData.payments && checkPaymentsData.payments.length > 0) {
+            const payment = checkPaymentsData.payments[0];
+            
+            // El internal_code puede venir en diferentes campos según la documentación
+            const foundInternalCode = payment.internal_code || 
+                                     payment.internalCode || 
+                                     payment.checkout_internal_code ||
+                                     payment.checkoutInternalCode;
+            
+            if (foundInternalCode) {
+              console.log('✅ Found internal_code from check-payments:', foundInternalCode);
+              // Usar el internal_code encontrado
+              internal_code = foundInternalCode;
+              // Actualizar req.query para que se use más adelante
+              req.query.internal_code = internal_code;
+            } else {
+              console.warn('⚠️  Payment found but no internal_code in response:', payment);
+            }
+          }
+        }
+
+        // Si aún no tenemos internal_code y el status es success, intentar buscar en órdenes de Shopify
+        // usando el transaction_id almacenado (si tenemos acceso a storage)
+        if (!internal_code && status === 'success') {
+          console.log('ℹ️  Attempting to find order by transaction_id from Shopify...');
+          // Nota: Esto requeriría mantener un registro transaction_id -> order_id
+          // Por ahora, requerimos internal_code o que venga en la respuesta de Qhantuy
+          console.warn('⚠️  Could not resolve internal_code from transaction_id alone');
+          console.warn('   Please include internal_code in callback or configure Qhantuy to send it');
+        }
+
+      } catch (error) {
+        console.error('❌ Error consulting Qhantuy API for transaction_id:', error);
+        // Continuar con el error pero informar al usuario
       }
-      
-      return res.status(400).json({
-        success: false,
-        message: 'internal_code is required. Format: SHOPIFY-ORDER-{order_number}',
-        example: `/api/qhantuy/callback?transaction_id=${transaction_id}&internal_code=SHOPIFY-ORDER-1001&status=success&shop=your-store.myshopify.com`
-      });
+
+      // Si después de todo aún no tenemos internal_code, devolver error
+      if (!internal_code) {
+        return res.status(400).json({
+          success: false,
+          message: 'Could not determine internal_code from transaction_id. Please include it in the callback.',
+          tip: 'Include internal_code parameter: /api/qhantuy/callback?transaction_id=XXX&internal_code=SHOPIFY-ORDER-XXX&status=success',
+          transaction_id: transaction_id,
+          attempted_lookup: true
+        });
+      }
     }
 
     // Verify status is success
