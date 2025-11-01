@@ -83,41 +83,13 @@ export default async function handler(req, res) {
     const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'];
     const hostParam = req.query.host;
     
-    console.log('Root endpoint called:', { shopParam, hostParam, method: req.method });
-    
-    // Si viene con shop/host, verificar token
+    // Si viene con shop, redirigir directamente a OAuth
+    // (No verificamos token para evitar errores)
     if (shopParam) {
-      try {
-        const shopDomain = sanitizeShop(shopParam, true);
-        console.log('Sanitized shop domain:', shopDomain);
-        
-        if (shopDomain) {
-          // Intentar obtener token, pero no fallar si hay error
-          let hasToken = false;
-          try {
-            const token = await getAccessTokenSafe(shopDomain);
-            hasToken = !!token;
-            console.log('Token check result:', { hasToken, shopDomain });
-          } catch (tokenError) {
-            console.error('Error checking token (non-fatal):', tokenError);
-            // Continuar sin token
-          }
-          
-          if (!hasToken) {
-            // Redirigir a OAuth si no hay token
-            console.log('No token found, redirecting to OAuth');
-            return res.redirect(302, `/api/auth?shop=${encodeURIComponent(shopDomain)}`);
-          }
-          
-          // Hay token, mostrar página simple
-          return res.status(200).send(getSimpleHTML(
-            'Qhantuy Payment Validator',
-            `App instalada y activa para: ${shopDomain}`
-          ));
-        }
-      } catch (shopError) {
-        console.error('Error processing shop parameter:', shopError);
-        // Continuar sin shop, mostrar página de bienvenida
+      const shopDomain = sanitizeShop(shopParam, true);
+      if (shopDomain) {
+        // Redirigir a OAuth - OAuth manejará si la app ya está instalada
+        return res.redirect(302, `/api/auth?shop=${encodeURIComponent(shopDomain)}`);
       }
     }
     
@@ -128,17 +100,12 @@ export default async function handler(req, res) {
     ));
     
   } catch (error) {
-    console.error('Fatal error in root handler:', error);
-    console.error('Error stack:', error.stack);
+    console.error('Error in root handler:', error);
     
-    // En caso de error, mostrar página con más detalles en desarrollo
-    const errorMessage = process.env.NODE_ENV === 'production' 
-      ? 'Hubo un error al cargar la aplicación. Por favor, intenta de nuevo.'
-      : `Error: ${error.message}`;
-    
+    // En caso de error, mostrar página de bienvenida (sin error)
     return res.status(200).send(getSimpleHTML(
-      'Error',
-      errorMessage
+      'Qhantuy Payment Validator',
+      'Validación de Pagos QR para Shopify - Custom UI Extension'
     ));
   }
 }
