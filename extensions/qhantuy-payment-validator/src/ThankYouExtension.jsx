@@ -1164,7 +1164,42 @@ function QhantuPaymentValidatorThankYou() {
   
   // Función para verificar el estado del pago
   const checkPaymentStatus = useCallback(async () => {
-    if (!transactionId || isChecking) return;
+    // Obtener transactionId del estado o del storage (priorizar estado actual)
+    let txId = transactionId;
+    
+    // Si no hay transactionId en estado, intentar obtenerlo de storage
+    if (!txId) {
+      const savedTxId = await storage.read('transaction_id');
+      if (savedTxId) {
+        txId = savedTxId;
+        console.log('ℹ️ Transaction ID obtenido de storage:', txId);
+      }
+    }
+    
+    // Validar y limpiar transactionId
+    if (!txId) {
+      console.error('❌ No hay transaction_id disponible para verificar');
+      setErrorMessage('Error: No se encontró el ID de transacción. Por favor recarga la página.');
+      return;
+    }
+    
+    // Limpiar y normalizar el transaction_id
+    // Puede venir como string, número, o con espacios
+    const cleanTxId = String(txId).trim();
+    
+    // Logging detallado para debug
+    console.log('🔍 Transaction ID details:', {
+      original: transactionId,
+      fromStorage: txId,
+      cleaned: cleanTxId,
+      type: typeof cleanTxId,
+      length: cleanTxId.length
+    });
+    
+    if (isChecking) {
+      console.log('⚠️ Ya se está verificando el pago, esperando...');
+      return;
+    }
     
     setIsChecking(true);
     
@@ -1184,10 +1219,11 @@ function QhantuPaymentValidatorThankYou() {
       
       // PASO 1: Simular el callback de Qhantuy usando test-callback endpoint
       // Esto simula que Qhantuy confirmó el pago
-      console.log('🔍 PASO 1: Simulando callback de Qhantuy con transaction_id:', transactionId);
+      console.log('🔍 PASO 1: Simulando callback de Qhantuy con transaction_id:', cleanTxId);
       
       const testCallbackUrl = `${formattedSettings.apiUrl.replace(/\/$/, '')}/test-callback`;
       console.log('Calling test-callback endpoint:', testCallbackUrl);
+      console.log('Request body:', { transactionID: cleanTxId });
       
       let testCallbackResponse;
       try {
@@ -1198,7 +1234,7 @@ function QhantuPaymentValidatorThankYou() {
             'X-API-Token': formattedSettings.apiToken || ''
           },
           body: JSON.stringify({
-            transactionID: transactionId.toString()
+            transactionID: cleanTxId
           })
         });
         
@@ -1304,7 +1340,7 @@ function QhantuPaymentValidatorThankYou() {
                 },
                 body: JSON.stringify({
                   order_id: orderId || orderNumber,
-                  transaction_id: transactionId
+                  transaction_id: cleanTxId
                 })
               });
               
