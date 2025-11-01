@@ -490,24 +490,45 @@ export default async function handler(req, res) {
                 btn.addEventListener('click', function() {
                     try {
                         const urlParams = new URLSearchParams(window.location.search);
-                        const host = urlParams.get('host');
                         const shop = urlParams.get('shop') || '${shopDomain}';
-                        let checkoutUrl;
-                        if (host) {
-                            const decodedHost = decodeURIComponent(host).replace(/\\//g, '');
-                            checkoutUrl = 'https://' + decodedHost + '/admin/settings/checkout';
-                        } else {
-                            checkoutUrl = 'https://' + shop + '/admin/settings/checkout';
+                        
+                        // Construir URL directamente desde el shop domain
+                        // El host de Shopify está codificado y puede causar problemas
+                        // Es más seguro usar el shop domain directamente
+                        let shopDomain = shop;
+                        if (!shopDomain.includes('.')) {
+                            shopDomain = shopDomain + '.myshopify.com';
                         }
+                        
+                        // Asegurar que el shop domain no tenga protocolo
+                        shopDomain = shopDomain.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');
+                        
+                        const checkoutUrl = 'https://' + shopDomain + '/admin/settings/checkout';
+                        
+                        console.log('Navigating to:', checkoutUrl);
+                        
+                        // Intentar usar App Bridge si está disponible
                         if (window.shopify && window.shopify.redirect) {
-                            window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
+                            try {
+                                window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
+                            } catch (e) {
+                                console.log('App Bridge redirect failed, using window.top:', e);
+                                window.top.location.href = checkoutUrl;
+                            }
                         } else {
+                            // Fallback: redirección directa
                             window.location.href = checkoutUrl;
                         }
                     } catch (error) {
                         console.error('Error navigating:', error);
-                        const shop = new URLSearchParams(window.location.search).get('shop') || '${shopDomain}';
-                        window.location.href = 'https://' + shop + '/admin/settings/checkout';
+                        // Fallback final: construir URL básica
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const shop = urlParams.get('shop') || '${shopDomain}';
+                        let shopDomain = shop.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');
+                        if (!shopDomain.includes('.')) {
+                            shopDomain = shopDomain + '.myshopify.com';
+                        }
+                        window.location.href = 'https://' + shopDomain + '/admin/settings/checkout';
                     }
                 });
                 btn.addEventListener('mouseenter', function() {
