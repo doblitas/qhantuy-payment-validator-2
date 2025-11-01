@@ -310,12 +310,15 @@ export default async function handler(req, res) {
                     <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere verificación manual</div>
                     <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
                         <strong>📍 Dónde configurar:</strong><br>
-                        <strong>1.</strong> Ve a <strong>Shopify Admin</strong><br>
-                        <strong>2.</strong> Navega a <strong>Settings → Checkout</strong><br>
+                        <strong>1.</strong> Haz clic en el botón de abajo para ir directamente a la configuración<br>
+                        <strong>2.</strong> O ve manualmente a <strong>Settings → Checkout</strong> en Shopify Admin<br>
                         <strong>3.</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"Qhantuy QR Payment Validator"</strong><br>
                         <strong>4.</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
                         <strong>5.</strong> Configura los campos requeridos una sola vez - se compartirán entre Thank You y Order Status pages<br><br>
-                        <em style="font-size: 12px;">💡 Nota: Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.</em>
+                        <button id="goToCheckoutConfig" style="margin-top: 12px; padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s;">
+                            ⚙️ Ir a Configuración de Checkout
+                        </button>
+                        <em style="font-size: 12px; display: block; margin-top: 8px;">💡 Nota: Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.</em>
                     </div>
                     <div class="checklist-item-required" style="margin-top: 10px;">Campos Requeridos:</div>
                     <ul class="checklist-fields">
