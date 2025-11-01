@@ -54,6 +54,7 @@ function QhantuPaymentValidatorOrderStatus() {
   const startTimeRef = useRef(null);
   const retryAttemptRef = useRef(0);
   const isInitializingRef = useRef(false);
+  const isCreatingCheckoutRef = useRef(false); // Prevenir creación duplicada de checkout
   
   // Configuración de reintentos y timeouts
   const MAX_RETRIES = 10; // Máximo número de reintentos
@@ -891,6 +892,12 @@ function QhantuPaymentValidatorOrderStatus() {
 
   // Función para intentar crear el checkout
   const attemptCheckoutCreation = useCallback(async () => {
+    // PREVENIR CREACIÓN DUPLICADA: Si ya estamos creando un checkout, salir inmediatamente
+    if (isCreatingCheckoutRef.current) {
+      console.log('⚠️ Checkout creation already in progress (OrderStatus), skipping duplicate call');
+      return;
+    }
+
     // Limpiar timeouts anteriores si existen
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
@@ -898,29 +905,53 @@ function QhantuPaymentValidatorOrderStatus() {
     }
 
     try {
-      // Verificar si ya existe un transaction_id guardado
+      // Verificar si ya existe un transaction_id guardado ANTES de crear uno nuevo
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
       
-      console.log('Storage check:', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
+      console.log('Storage check (OrderStatus):', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
       
       if (savedStatus === 'success') {
-        console.log('Payment already successful, restoring...');
+        console.log('✅ Payment already successful, restoring from storage (OrderStatus)...');
         setPaymentStatus('success');
         setTransactionId(savedTxId);
+        setQrData(savedQr);
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
         return;
       }
       
       if (savedTxId && savedQr) {
-        console.log('Restored from storage:', savedTxId);
+        console.log('✅ Restored checkout from storage (OrderStatus):', savedTxId);
         setTransactionId(savedTxId);
         setQrData(savedQr);
         setPaymentStatus('pending');
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
         return;
       }
+
+      // Verificar estado actual ANTES de crear checkout
+      // Si ya tenemos un transaction_id en el estado, no crear otro
+      if (transactionId) {
+        console.log('⚠️ Transaction ID already exists in state (OrderStatus):', transactionId, '- Skipping checkout creation');
+        isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
+        return;
+      }
+
+      // Verificar que no estemos en un estado que ya tenga checkout
+      if (paymentStatus !== 'initializing' && paymentStatus !== 'error') {
+        console.log('⚠️ Payment status is not initializing (OrderStatus):', paymentStatus, '- Skipping checkout creation');
+        isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
+        return;
+      }
+
+      // MARCADOR: Estamos creando checkout ahora
+      isCreatingCheckoutRef.current = true;
+      console.log('🔐 Lock acquired (OrderStatus): Creating checkout...');
 
       // Verificar si tenemos los datos necesarios
       if (!hasRequiredOrderData()) {
@@ -994,47 +1025,63 @@ function QhantuPaymentValidatorOrderStatus() {
         console.log('createQhantuCheckout completed in', checkoutDuration, 'ms');
         console.log('Checkout response:', checkoutData);
       } catch (error) {
-        console.error('Exception thrown by createQhantuCheckout:', error);
+        console.error('Exception thrown by createQhantuCheckout (OrderStatus):', error);
         setPaymentStatus('error');
         setErrorMessage(`Error al crear el checkout: ${error.message || 'Error desconocido'}`);
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false; // Liberar lock
         return;
       }
       
       if (!checkoutData) {
-        console.error('Checkout data is null');
+        console.error('Checkout data is null (OrderStatus)');
         setPaymentStatus('error');
         setErrorMessage('Error: No se recibió respuesta del servidor');
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false; // Liberar lock
         return;
       }
       
       if (checkoutData?.process && checkoutData.transaction_id) {
-        console.log('Checkout successful, saving...');
-        setTransactionId(checkoutData.transaction_id);
-        setQrData(checkoutData.image_data);
-        
-        // Guardar en storage
-        await storage.write('transaction_id', checkoutData.transaction_id.toString());
-        await storage.write('qr_image', checkoutData.image_data);
+        // VERIFICACIÓN FINAL: Asegurar que no creamos duplicados
+        const finalCheck = await storage.read('transaction_id');
+        if (finalCheck && finalCheck !== checkoutData.transaction_id.toString()) {
+          console.warn('⚠️ WARNING (OrderStatus): Another transaction_id exists in storage:', finalCheck);
+          console.warn('   This checkout may be a duplicate. Using existing:', finalCheck);
+          setTransactionId(finalCheck);
+          const existingQr = await storage.read('qr_image');
+          if (existingQr) setQrData(existingQr);
+        } else {
+          // Guardar el nuevo checkout
+          console.log('Checkout successful (OrderStatus), saving...');
+          setTransactionId(checkoutData.transaction_id);
+          setQrData(checkoutData.image_data);
+          
+          // Guardar en storage
+          await storage.write('transaction_id', checkoutData.transaction_id.toString());
+          await storage.write('qr_image', checkoutData.image_data);
+        }
         
         setPaymentStatus('pending');
-        console.log('Payment initialized successfully');
+        console.log('✅ Payment initialized successfully (OrderStatus)');
         retryAttemptRef.current = 0; // Reset retry count on success
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false; // Liberar el lock
       } else {
-        console.error('Checkout failed:', checkoutData);
+        console.error('Checkout failed (OrderStatus):', checkoutData);
         console.error('Checkout process:', checkoutData?.process);
         console.error('Checkout message:', checkoutData?.message);
         setPaymentStatus('error');
         setErrorMessage(checkoutData?.message || 'Error al crear el pago QR. Por favor contacta a soporte.');
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false; // Liberar el lock en caso de error
       }
     } catch (error) {
-      console.error('Error in checkout creation attempt:', error);
+      console.error('Error in checkout creation attempt (OrderStatus):', error);
       setPaymentStatus('error');
       setErrorMessage(`Error al inicializar el pago: ${error.message}`);
       isInitializingRef.current = false;
+      isCreatingCheckoutRef.current = false; // Liberar el lock en caso de error
     }
   }, [orderData, totalAmount, cost, apiUrl, storage, createQhantuCheckout, getOrderIdentifiers, hasRequiredOrderData, order, api]);
 

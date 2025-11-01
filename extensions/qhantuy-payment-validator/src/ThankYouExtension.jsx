@@ -58,6 +58,7 @@ function QhantuPaymentValidatorThankYou() {
   const startTimeRef = useRef(null);
   const retryAttemptRef = useRef(0);
   const isInitializingRef = useRef(false);
+  const isCreatingCheckoutRef = useRef(false); // Prevenir creación duplicada de checkout
   
   // Configuración de reintentos y timeouts
   const MAX_RETRIES = 10; // Máximo número de reintentos
@@ -888,6 +889,12 @@ function QhantuPaymentValidatorThankYou() {
 
   // Función para intentar crear el checkout
   const attemptCheckoutCreation = useCallback(async () => {
+    // PREVENIR CREACIÓN DUPLICADA: Si ya estamos creando un checkout, salir inmediatamente
+    if (isCreatingCheckoutRef.current) {
+      console.log('⚠️ Checkout creation already in progress, skipping duplicate call');
+      return;
+    }
+
     // Limpiar timeouts anteriores si existen
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
@@ -895,7 +902,7 @@ function QhantuPaymentValidatorThankYou() {
     }
 
     try {
-      // Verificar si ya existe un transaction_id guardado
+      // Verificar si ya existe un transaction_id guardado ANTES de crear uno nuevo
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
@@ -903,21 +910,45 @@ function QhantuPaymentValidatorThankYou() {
       console.log('Storage check:', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
       
       if (savedStatus === 'success') {
-        console.log('Payment already successful, restoring...');
+        console.log('✅ Payment already successful, restoring from storage...');
         setPaymentStatus('success');
         setTransactionId(savedTxId);
+        setQrData(savedQr);
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
         return;
       }
       
       if (savedTxId && savedQr) {
-        console.log('Restored from storage:', savedTxId);
+        console.log('✅ Restored checkout from storage:', savedTxId);
         setTransactionId(savedTxId);
         setQrData(savedQr);
         setPaymentStatus('pending');
         isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
         return;
       }
+
+      // Verificar estado actual ANTES de crear checkout
+      // Si ya tenemos un transaction_id en el estado, no crear otro
+      if (transactionId) {
+        console.log('⚠️ Transaction ID already exists in state:', transactionId, '- Skipping checkout creation');
+        isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
+        return;
+      }
+
+      // Verificar que no estemos en un estado que ya tenga checkout
+      if (paymentStatus !== 'initializing' && paymentStatus !== 'error') {
+        console.log('⚠️ Payment status is not initializing:', paymentStatus, '- Skipping checkout creation');
+        isInitializingRef.current = false;
+        isCreatingCheckoutRef.current = false;
+        return;
+      }
+
+      // MARCADOR: Estamos creando checkout ahora
+      isCreatingCheckoutRef.current = true;
+      console.log('🔐 Lock acquired: Creating checkout...');
 
       // Verificar si tenemos los datos necesarios
       if (!hasRequiredOrderData()) {
@@ -930,6 +961,7 @@ function QhantuPaymentValidatorThankYou() {
           setPaymentStatus('error');
           setErrorMessage('Error: No se pudo obtener el ID de la orden después de 30 segundos. Por favor recarga la página.');
           isInitializingRef.current = false;
+          isCreatingCheckoutRef.current = false;
           return;
         }
         
@@ -940,6 +972,7 @@ function QhantuPaymentValidatorThankYou() {
           setPaymentStatus('error');
           setErrorMessage('Error: No se pudo obtener el ID de la orden después de varios intentos. Por favor recarga la página.');
           isInitializingRef.current = false;
+          isCreatingCheckoutRef.current = false;
           return;
         }
 
