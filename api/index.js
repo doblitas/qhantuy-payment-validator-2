@@ -390,13 +390,20 @@ export default async function handler(req, res) {
                             <div class="checklist-item-title">2. Extension Settings (Credenciales Qhantuy)</div>
                             <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere configuración</div>
                             <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
-                                <strong>📍 Cómo configurar:</strong><br><br>
-                                <strong>Paso 1:</strong> Abre una nueva pestaña y ve a <strong>Shopify Admin → Settings → Checkout</strong><br>
-                                <strong>Paso 2:</strong> Busca <strong>"QPOS Validator"</strong> en Checkout extensions o Order status page<br>
-                                <strong>Paso 3:</strong> Haz clic en el <strong>icono ⚙️</strong> para abrir Settings<br>
-                                <strong>Paso 4:</strong> Completa los campos requeridos (ver pestaña "Credenciales")<br><br>
+                                <strong>📍 Cómo agregar y configurar:</strong><br><br>
+                                <strong>Paso 1:</strong> Ve a <strong>Shopify Admin → Online Store → Themes → Customize</strong><br>
+                                <strong>Paso 2:</strong> En la barra lateral izquierda, busca <strong>"Apps"</strong> → haz clic en <strong>"All"</strong><br>
+                                <strong>Paso 3:</strong> Busca <strong>"QPOS Validator"</strong> y haz clic en el botón <strong>+</strong> (azul con signo más)<br>
+                                <strong>Paso 4:</strong> Selecciona dónde agregarlo:
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li><strong>"Thank you"</strong> - Para la página de confirmación de pedido</li>
+                                    <li><strong>"Order status"</strong> - Para la página de estado del pedido</li>
+                                </ul>
+                                <strong>Paso 5:</strong> Una vez agregado, haz clic en el bloque <strong>"QPOS Validator"</strong> en el editor<br>
+                                <strong>Paso 6:</strong> En el panel derecho, completa los campos requeridos (ver pestaña "Credenciales")<br>
+                                <strong>Paso 7:</strong> Guarda los cambios<br><br>
                                 <em style="font-size: 12px; padding: 8px; background: #fff3cd; border-radius: 4px; display: block;">
-                                    💡 <strong>Importante:</strong> Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.
+                                    💡 <strong>Importante:</strong> Puedes agregar el bloque a ambas páginas (Thank you y Order status). Solo necesitas configurar los settings una vez - se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.
                                 </em>
                             </div>
                         </div>
@@ -408,7 +415,7 @@ export default async function handler(req, res) {
                         <p style="margin-bottom: 12px;"><strong>Para procesar pagos QR necesitas:</strong></p>
                         <ul style="margin-left: 20px; margin-bottom: 0;">
                             <li><strong>✅ App instalada</strong> - Completado</li>
-                            <li><strong>❓ Extension Settings</strong> - Configura las credenciales en Settings → Checkout</li>
+                            <li><strong>❓ Extension Settings</strong> - Agrega el bloque en Customize → Apps y configura las credenciales</li>
                         </ul>
                     </div>
                 </div>
@@ -551,16 +558,24 @@ export default async function handler(req, res) {
                     
                     <div class="accordion-item">
                         <div class="accordion-header" onclick="toggleAccordion(this)">
-                            <span>¿Cómo configuro la extensión?</span>
+                            <span>¿Cómo agrego y configuro la extensión?</span>
                         </div>
                         <div class="accordion-content">
                             <div class="accordion-body">
-                                <p><strong>Paso 1:</strong> Ve a Shopify Admin → <strong>Settings → Checkout</strong></p>
-                                <p><strong>Paso 2:</strong> Busca <strong>"QPOS Validator"</strong> en la lista de extensiones</p>
-                                <p><strong>Paso 3:</strong> Haz clic en el icono ⚙️ para abrir Settings</p>
-                                <p><strong>Paso 4:</strong> Completa los campos requeridos con tus credenciales de Qhantuy</p>
-                                <p><strong>Paso 5:</strong> Guarda la configuración</p>
-                                <p><em>💡 Solo necesitas configurar una vez - se compartirá entre Thank You y Order Status pages.</em></p>
+                                <p><strong>Paso 1:</strong> Ve a <strong>Shopify Admin → Online Store → Themes → Customize</strong></p>
+                                <p><strong>Paso 2:</strong> En la barra lateral izquierda, haz clic en <strong>"Apps"</strong> → Selecciona la pestaña <strong>"All"</strong></p>
+                                <p><strong>Paso 3:</strong> Busca <strong>"QPOS Validator"</strong> en la lista y haz clic en el botón <strong>+</strong> (azul con signo más)</p>
+                                <p><strong>Paso 4:</strong> Selecciona dónde agregarlo:
+                                <ul style="margin-left: 20px; margin-top: 5px;">
+                                    <li><strong>"Thank you"</strong> - Para agregar a la página de confirmación</li>
+                                    <li><strong>"Order status"</strong> - Para agregar a la página de estado del pedido</li>
+                                </ul>
+                                </p>
+                                <p><strong>Paso 5:</strong> Una vez agregado, haz clic en el bloque <strong>"QPOS Validator"</strong> en el editor visual</p>
+                                <p><strong>Paso 6:</strong> En el panel derecho aparecerán los campos de configuración (Block settings)</p>
+                                <p><strong>Paso 7:</strong> Completa los campos requeridos con tus credenciales de Qhantuy (ver pestaña "Credenciales")</p>
+                                <p><strong>Paso 8:</strong> Guarda los cambios</p>
+                                <p><em>💡 Puedes agregar el bloque a ambas páginas. Solo necesitas configurar los settings una vez - se sincronizan automáticamente entre ambas extensiones. También puedes duplicar bloques si lo necesitas.</em></p>
                             </div>
                         </div>
                     </div>
