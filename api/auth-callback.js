@@ -1,6 +1,6 @@
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
-import { restResources } from '@shopify/shopify-api/rest/admin/2024-10';
+import { restResources } from '@shopify/shopify-api/rest/admin/2024-04';
 import { storeAccessToken } from '../web/backend/storage.js';
 
 // Initialize Shopify API
@@ -9,7 +9,7 @@ const shopify = shopifyApi({
   apiSecretKey: process.env.SHOPIFY_API_SECRET,
   scopes: ['read_orders', 'write_orders'],
   hostName: process.env.SHOPIFY_APP_URL?.replace(/https?:\/\//, '') || '',
-  apiVersion: ApiVersion.October24,
+  apiVersion: ApiVersion.April24,
   isEmbeddedApp: true,
   restResources,
 });
