@@ -1357,7 +1357,7 @@ function QhantuPaymentValidatorOrderStatus() {
       setIsChecking(false);
       console.log('✅ Verificación de pago completada (OrderStatus)');
     }
-  }, [transactionId, apiUrl, apiToken, appkey, storage, isChecking, getOrderIdentifiers, shop]);
+  }, [transactionId, isChecking, getOrderIdentifiers, shop, formattedSettings, storage]);
   
   // Polling automático: verificar el estado del pago cada X segundos cuando está pendiente
   // Se detiene automáticamente después de 2 minutos para evitar verificaciones excesivas
