@@ -103,7 +103,7 @@ function QhantuPaymentValidatorThankYou() {
         const backendApiUrl = settingsRaw?.backend_api_url || 
                            settingsRaw?.current?.backend_api_url ||
                            settings?.backend_api_url ||
-                           'https://qhantuy-payment-backend-acxfj3k4e-doblitasgmailcoms-projects.vercel.app';
+                           'https://qhantuy-payment-backend.vercel.app';
         
         const verifyUrl = `${backendApiUrl.replace(/\/$/, '')}/api/verify?shop=${shopDomain}`;
         
