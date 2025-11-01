@@ -1,19 +1,36 @@
-import { getAccessToken } from '../web/backend/storage.js';
-
 /**
  * Sanitize shop domain (simple version)
  */
 function sanitizeShop(shop, addMyShopifyDomain = false) {
   if (!shop) return null;
   
-  let domain = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  
-  if (addMyShopifyDomain && !domain.includes('.myshopify.com')) {
-    const shopName = domain.split('.')[0].toLowerCase();
-    domain = `${shopName}.myshopify.com`;
+  try {
+    let domain = shop.replace(/^https?:\/\//, '').replace(/\/$/, '');
+    
+    if (addMyShopifyDomain && !domain.includes('.myshopify.com')) {
+      const shopName = domain.split('.')[0].toLowerCase();
+      domain = `${shopName}.myshopify.com`;
+    }
+    
+    return domain.toLowerCase();
+  } catch (error) {
+    console.error('Error sanitizing shop:', error);
+    return null;
   }
-  
-  return domain.toLowerCase();
+}
+
+/**
+ * Get access token (safe wrapper)
+ */
+async function getAccessTokenSafe(shopDomain) {
+  try {
+    // Dynamic import para evitar errores si storage.js no está disponible
+    const { getAccessToken } = await import('../web/backend/storage.js');
+    return await getAccessToken(shopDomain);
+  } catch (error) {
+    console.error('Error importing or calling getAccessToken:', error);
+    return null;
+  }
 }
 
 /**
@@ -78,7 +95,7 @@ export default async function handler(req, res) {
           // Intentar obtener token, pero no fallar si hay error
           let hasToken = false;
           try {
-            const token = await getAccessToken(shopDomain);
+            const token = await getAccessTokenSafe(shopDomain);
             hasToken = !!token;
             console.log('Token check result:', { hasToken, shopDomain });
           } catch (tokenError) {
