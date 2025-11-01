@@ -1,18 +1,26 @@
-import '@shopify/shopify-api/adapters/node';
-import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
-import { restResources } from '@shopify/shopify-api/rest/admin/2024-10';
 import { getAccessToken } from '../web/backend/storage.js';
 
-// Initialize Shopify API
-const shopify = shopifyApi({
-  apiKey: process.env.SHOPIFY_API_KEY,
-  apiSecretKey: process.env.SHOPIFY_API_SECRET,
-  scopes: ['read_orders', 'write_orders'],
-  hostName: process.env.SHOPIFY_APP_URL?.replace(/https?:\/\//, '') || '',
-  apiVersion: ApiVersion.October24,
-  isEmbeddedApp: true,
-  restResources,
-});
+/**
+ * Sanitize shop domain (simple version without Shopify API dependency)
+ */
+function sanitizeShop(shop, addMyShopifyDomain = false) {
+  if (!shop) return null;
+  
+  // Remove protocol if present
+  let domain = shop.replace(/^https?:\/\//, '');
+  
+  // Remove trailing slash
+  domain = domain.replace(/\/$/, '');
+  
+  // If it doesn't end with .myshopify.com, add it
+  if (addMyShopifyDomain && !domain.includes('.myshopify.com')) {
+    // Extract shop name (remove .myshopify.com if present, then clean)
+    const shopName = domain.split('.')[0].toLowerCase();
+    domain = `${shopName}.myshopify.com`;
+  }
+  
+  return domain.toLowerCase();
+}
 
 /**
  * Vercel Serverless Function
@@ -30,20 +38,27 @@ export default async function handler(req, res) {
     // Si viene con shop pero sin host, podría ser instalación
     if (shopParam && !hostParam) {
       // Verificar si la app ya está instalada
-      const shopDomain = shopify.utils.sanitizeShop(shopParam, true);
-      const hasToken = await getAccessToken(shopDomain);
-      
-      if (!hasToken) {
-        // App no instalada, redirigir a OAuth
-        return res.redirect(302, `/api/auth?shop=${shopDomain}`);
+      const shopDomain = sanitizeShop(shopParam, true);
+      if (shopDomain) {
+        const hasToken = await getAccessToken(shopDomain);
+        
+        if (!hasToken) {
+          // App no instalada, redirigir a OAuth
+          return res.redirect(302, `/api/auth?shop=${shopDomain}`);
+        }
+        // App instalada, mostrar interfaz embebida
+        return res.status(200).send(getEmbeddedAppHTML(shopDomain, null));
       }
     }
     
     // Si viene con host, es una app embebida ya instalada
-    // Validar el host con Shopify API
     if (hostParam && shopParam) {
       try {
-        const shopDomain = shopify.utils.sanitizeShop(shopParam, true);
+        const shopDomain = sanitizeShop(shopParam, true);
+        
+        if (!shopDomain) {
+          throw new Error('Invalid shop domain');
+        }
         
         // Verificar si hay token (app instalada)
         const token = await getAccessToken(shopDomain);
@@ -61,11 +76,16 @@ export default async function handler(req, res) {
       } catch (error) {
         console.error('Error validating embedded app:', error);
         // Si hay error, redirigir a OAuth
-        return res.redirect(302, `/api/auth?shop=${shopParam}`);
+        const shopDomain = sanitizeShop(shopParam, true);
+        if (shopDomain) {
+          return res.redirect(302, `/api/auth?shop=${shopDomain}`);
+        }
       }
     }
   } catch (error) {
     console.error('Error in root handler:', error);
+    // Si hay cualquier error, mostrar página de bienvenida
+    return res.status(200).send(getWelcomeHTML());
   }
   
   // Si no viene con parámetros de Shopify, mostrar página de bienvenida
