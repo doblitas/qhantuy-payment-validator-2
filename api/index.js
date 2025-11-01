@@ -50,6 +50,7 @@ export default async function handler(req, res) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Qhantuy Payment Validator - Configuración</title>
     <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge-utils.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
