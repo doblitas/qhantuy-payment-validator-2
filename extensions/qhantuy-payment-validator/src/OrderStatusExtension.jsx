@@ -821,9 +821,11 @@ function QhantuPaymentValidatorOrderStatus() {
         }
 
         const data = await response.json();
-        console.log('Qhantuy response received:', data);
+        console.log('✅ Qhantuy response received (OrderStatus):', data);
         console.log('Response process:', data?.process);
         console.log('Response transaction_id:', data?.transaction_id);
+        console.log('Response transaction_id type:', typeof data?.transaction_id);
+        console.log('Response transaction_id cleaned:', data?.transaction_id ? String(data.transaction_id).trim() : 'N/A');
         
         return data;
       } catch (fetchError) {
