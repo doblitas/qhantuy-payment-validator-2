@@ -1,11 +1,18 @@
 /**
  * Vercel Serverless Function
  * GET / (raíz)
- * Versión ultra-simple para evitar crashes
+ * Versión con headers correctos para Shopify embebidas
  */
 export default async function handler(req, res) {
   try {
-    const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'];
+    // Headers necesarios para apps embebidas de Shopify
+    // Permiten que la app se cargue en un iframe
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('X-Frame-Options', 'ALLOW-FROM https://admin.shopify.com');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN'); // Para compatibilidad
+    res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com");
+    
+    const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'] || req.headers['x-shopify-shop'];
     
     // Si viene con shop, redirigir a OAuth
     if (shopParam) {
@@ -23,7 +30,7 @@ export default async function handler(req, res) {
       return res.redirect(302, `/api/auth?shop=${encodeURIComponent(shopDomain)}`);
     }
     
-    // Sin parámetros, página de bienvenida simple
+    // Sin parámetros, página de bienvenida simple con headers correctos
     res.status(200).send(`<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -62,8 +69,9 @@ export default async function handler(req, res) {
 </html>`);
     
   } catch (error) {
-    // Si hay cualquier error, devolver página simple
+    // Si hay cualquier error, devolver página simple con headers
     console.error('Error:', error);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.status(200).send(`<!DOCTYPE html>
 <html>
 <head><meta charset="UTF-8"><title>Error</title></head>
