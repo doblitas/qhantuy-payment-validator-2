@@ -8,8 +8,7 @@ export default async function handler(req, res) {
     // Headers necesarios para apps embebidas de Shopify
     // Permiten que la app se cargue en un iframe
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.setHeader('X-Frame-Options', 'ALLOW-FROM https://admin.shopify.com');
-    res.setHeader('X-Frame-Options', 'SAMEORIGIN'); // Para compatibilidad
+    // Content-Security-Policy es más moderno y permite múltiples orígenes
     res.setHeader('Content-Security-Policy', "frame-ancestors https://admin.shopify.com https://*.myshopify.com");
     
     const shopParam = req.query.shop || req.headers['x-shopify-shop-domain'] || req.headers['x-shopify-shop'];
