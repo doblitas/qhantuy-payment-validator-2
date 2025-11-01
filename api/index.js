@@ -488,14 +488,26 @@ export default async function handler(req, res) {
             const btn = document.getElementById('goToCheckoutConfig');
             if (btn) {
                 btn.addEventListener('click', function() {
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const host = urlParams.get('host');
-                    const shop = urlParams.get('shop') || '${shopDomain}';
-                    let checkoutUrl = host ? `https://${decodeURIComponent(host).replace(/\//g, '')}/admin/settings/checkout` : `https://${shop}/admin/settings/checkout`;
-                    if (window.shopify?.redirect) {
-                        window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
-                    } else {
-                        window.location.href = checkoutUrl;
+                    try {
+                        const urlParams = new URLSearchParams(window.location.search);
+                        const host = urlParams.get('host');
+                        const shop = urlParams.get('shop') || '${shopDomain}';
+                        let checkoutUrl;
+                        if (host) {
+                            const decodedHost = decodeURIComponent(host).replace(/\\//g, '');
+                            checkoutUrl = 'https://' + decodedHost + '/admin/settings/checkout';
+                        } else {
+                            checkoutUrl = 'https://' + shop + '/admin/settings/checkout';
+                        }
+                        if (window.shopify && window.shopify.redirect) {
+                            window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
+                        } else {
+                            window.location.href = checkoutUrl;
+                        }
+                    } catch (error) {
+                        console.error('Error navigating:', error);
+                        const shop = new URLSearchParams(window.location.search).get('shop') || '${shopDomain}';
+                        window.location.href = 'https://' + shop + '/admin/settings/checkout';
                     }
                 });
                 btn.addEventListener('mouseenter', function() {
