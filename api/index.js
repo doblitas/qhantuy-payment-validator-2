@@ -48,7 +48,7 @@ export default async function handler(req, res) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qhantuy Payment Validator - Configuración</title>
+    <title>QPos Validator - Configuración</title>
     <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
     <script src="https://cdn.shopify.com/shopifycloud/app-bridge-utils.js"></script>
     <style>
@@ -270,7 +270,7 @@ export default async function handler(req, res) {
 </head>
 <body>
     <div class="container">
-        <h1>🔧 Qhantuy Payment Validator</h1>
+        <h1>🔧 QPos Validator</h1>
         <p class="subtitle">Guía de Configuración e Información del Servicio</p>
         
         <div class="shop-info">
@@ -312,7 +312,7 @@ export default async function handler(req, res) {
                         <strong>📍 Dónde configurar:</strong><br><br>
                         <strong>Paso 1:</strong> Abre una nueva pestaña en tu navegador y ve a tu <strong>Shopify Admin</strong><br>
                         <strong>Paso 2:</strong> Navega a <strong>Settings → Checkout</strong><br>
-                        <strong>Paso 3:</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"Qhantuy QR Payment Validator"</strong><br>
+                        <strong>Paso 3:</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"QPos Validator"</strong><br>
                         <strong>Paso 4:</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
                         <strong>Paso 5:</strong> Configura los campos requeridos una sola vez - se compartirán automáticamente entre Thank You y Order Status pages<br><br>
                         <em style="font-size: 12px; display: block; margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px;">
@@ -366,7 +366,7 @@ export default async function handler(req, res) {
                 </ul>
                 <p style="margin-top: 15px; margin-bottom: 0;">
                     <strong>💡 Próximo paso:</strong> Ve a <strong>Settings → Checkout</strong> en Shopify Admin, busca 
-                    <strong>"Qhantuy QR Payment Validator"</strong> y configura los campos requeridos una sola vez. 
+                    <strong>"QPos Validator"</strong> y configura los campos requeridos una sola vez. 
                     Los settings se sincronizarán automáticamente entre Thank You y Order Status pages.
                 </p>
             </div>
@@ -439,7 +439,7 @@ export default async function handler(req, res) {
             <div class="step">
                 <span class="step-number">1</span>
                 <strong>Acceder a Extension Settings</strong>
-                <p>Ve a tu Shopify Admin → Apps → Qhantuy Payment Validator → Settings</p>
+                <p>Ve a tu Shopify Admin → Apps → QPos Validator → Settings</p>
             </div>
 
             <div class="step">
@@ -507,7 +507,7 @@ export default async function handler(req, res) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qhantuy Payment Validator</title>
+    <title>QPos Validator</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -533,7 +533,7 @@ export default async function handler(req, res) {
 </head>
 <body>
     <div class="container">
-        <h1>Qhantuy Payment Validator</h1>
+        <h1>QPos Validator</h1>
         <p>Validación de Pagos QR para Shopify - Custom UI Extension</p>
     </div>
 </body>

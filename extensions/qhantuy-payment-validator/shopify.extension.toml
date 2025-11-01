@@ -3,7 +3,7 @@ api_version = "2025-01"
 [[extensions]]
 uid = "85c46207-0627-facd-fc76-9b4baf21974fdb60bfd6"
 type = "ui_extension"
-name = "Qhantuy QR Payment Validator"
+name = "QPos Validator"
 handle = "qhantuy-qr-validator"
 
 [[extensions.targeting]]
