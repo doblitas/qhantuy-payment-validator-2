@@ -309,16 +309,15 @@ export default async function handler(req, res) {
                     <div class="checklist-item-title">3. Extension Settings (Credenciales Qhantuy)</div>
                     <div class="checklist-item-note" style="color: #495057; font-weight: bold;">⚠️ Requiere verificación manual</div>
                     <div class="checklist-item-note" style="margin-top: 8px; padding: 12px; background: #f0f8ff; border-left: 4px solid #007bff; border-radius: 4px;">
-                        <strong>📍 Dónde configurar:</strong><br>
-                        <strong>1.</strong> Haz clic en el botón de abajo para ir directamente a la configuración<br>
-                        <strong>2.</strong> O ve manualmente a <strong>Settings → Checkout</strong> en Shopify Admin<br>
-                        <strong>3.</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"Qhantuy QR Payment Validator"</strong><br>
-                        <strong>4.</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
-                        <strong>5.</strong> Configura los campos requeridos una sola vez - se compartirán entre Thank You y Order Status pages<br><br>
-                        <button id="goToCheckoutConfig" style="margin-top: 12px; padding: 12px 24px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s;">
-                            ⚙️ Ir a Configuración de Checkout
-                        </button>
-                        <em style="font-size: 12px; display: block; margin-top: 8px;">💡 Nota: Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones.</em>
+                        <strong>📍 Dónde configurar:</strong><br><br>
+                        <strong>Paso 1:</strong> Abre una nueva pestaña en tu navegador y ve a tu <strong>Shopify Admin</strong><br>
+                        <strong>Paso 2:</strong> Navega a <strong>Settings → Checkout</strong><br>
+                        <strong>Paso 3:</strong> En la sección <strong>"Checkout extensions"</strong> o <strong>"Order status page"</strong>, busca <strong>"Qhantuy QR Payment Validator"</strong><br>
+                        <strong>Paso 4:</strong> Haz clic en el <strong>icono de configuración ⚙️</strong> o en <strong>"Settings"</strong><br>
+                        <strong>Paso 5:</strong> Configura los campos requeridos una sola vez - se compartirán automáticamente entre Thank You y Order Status pages<br><br>
+                        <em style="font-size: 12px; display: block; margin-top: 8px; padding: 8px; background: #fff3cd; border-radius: 4px;">
+                            💡 <strong>Importante:</strong> Solo necesitas configurar una vez. Los settings se sincronizan automáticamente entre ambas extensiones gracias al sistema de almacenamiento compartido.
+                        </em>
                     </div>
                     <div class="checklist-item-required" style="margin-top: 10px;">Campos Requeridos:</div>
                     <ul class="checklist-fields">
@@ -482,69 +481,6 @@ export default async function handler(req, res) {
             <p style="margin-top: 10px;">Para más información, consulta la documentación completa en el repositorio del proyecto.</p>
         </div>
     </div>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const btn = document.getElementById('goToCheckoutConfig');
-            if (btn) {
-                btn.addEventListener('click', function() {
-                    try {
-                        const urlParams = new URLSearchParams(window.location.search);
-                        const shop = urlParams.get('shop') || '${shopDomain}';
-                        
-                        // Construir URL directamente desde el shop domain
-                        // El host de Shopify está codificado y puede causar problemas
-                        // Es más seguro usar el shop domain directamente
-                        let shopDomain = shop;
-                        if (!shopDomain.includes('.')) {
-                            shopDomain = shopDomain + '.myshopify.com';
-                        }
-                        
-                        // Asegurar que el shop domain no tenga protocolo
-                        shopDomain = shopDomain.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');
-                        
-                        const checkoutUrl = 'https://' + shopDomain + '/admin/settings/checkout';
-                        
-                        console.log('Navigating to:', checkoutUrl);
-                        
-                        // Intentar usar App Bridge si está disponible
-                        if (window.shopify && window.shopify.redirect) {
-                            try {
-                                window.shopify.redirect(window.shopify.redirect.TOP_LEVEL, checkoutUrl);
-                            } catch (e) {
-                                console.log('App Bridge redirect failed, using window.top:', e);
-                                window.top.location.href = checkoutUrl;
-                            }
-                        } else {
-                            // Fallback: redirección directa
-                            window.location.href = checkoutUrl;
-                        }
-                    } catch (error) {
-                        console.error('Error navigating:', error);
-                        // Fallback final: construir URL básica
-                        const urlParams = new URLSearchParams(window.location.search);
-                        const shop = urlParams.get('shop') || '${shopDomain}';
-                        let shopDomain = shop.replace(/^https?:\\/\\//, '').replace(/\\/$/, '');
-                        if (!shopDomain.includes('.')) {
-                            shopDomain = shopDomain + '.myshopify.com';
-                        }
-                        window.location.href = 'https://' + shopDomain + '/admin/settings/checkout';
-                    }
-                });
-                btn.addEventListener('mouseenter', function() {
-                    this.style.background = '#0056b3';
-                    this.style.transform = 'translateY(-1px)';
-                    this.style.boxShadow = '0 4px 8px rgba(0,123,255,0.3)';
-                });
-                btn.addEventListener('mouseleave', function() {
-                    this.style.background = '#007bff';
-                    this.style.transform = 'translateY(0)';
-                    this.style.boxShadow = 'none';
-                });
-            }
-        });
-    </script>
-
 </body>
 </html>`);
     }
