@@ -9,6 +9,29 @@ import { handleQhantuCallback } from '../../web/backend/api.js';
  * - Test callback (POST with JSON body: { transactionID, State, Message, Data, transfer_id })
  */
 export default async function handler(req, res) {
+  // Configurar headers CORS para permitir llamadas desde cualquier origen
+  // (El callback puede ser llamado por Qhantuy o desde el frontend para pruebas)
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://extensions.shopifycdn.com',
+    'https://admin.shopify.com',
+    'https://checkout.shopify.com'
+  ];
+  
+  if (origin && (allowedOrigins.includes(origin) || origin.includes('localhost'))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Shopify-Shop-Domain, X-API-Token');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   // Permitir tanto GET como POST
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ 

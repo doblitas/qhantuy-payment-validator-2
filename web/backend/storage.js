@@ -8,14 +8,31 @@ const tokenStorage = new Map();
 
 /**
  * Get Vercel KV client (if available)
+ * This function checks for required environment variables before attempting to use KV
  */
 async function getKVClient() {
   try {
+    // Check if KV environment variables are set before importing
+    // @vercel/kv requires KV_REST_API_URL and KV_REST_API_TOKEN
+    if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
+      console.log('ℹ️  Vercel KV environment variables not set, using in-memory storage');
+      return null;
+    }
+    
     // Try to import @vercel/kv (only available in Vercel environment)
     const { kv } = await import('@vercel/kv');
-    return kv;
+    
+    // Test the connection with a ping
+    try {
+      await kv.ping();
+      return kv;
+    } catch (pingError) {
+      console.warn('⚠️  Vercel KV ping failed, using in-memory storage:', pingError.message);
+      return null;
+    }
   } catch (error) {
-    // Vercel KV not available, use in-memory storage
+    // Vercel KV not available or not configured, use in-memory storage
+    console.log('ℹ️  Vercel KV not available or not configured, using in-memory storage:', error.message);
     return null;
   }
 }

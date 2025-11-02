@@ -41,7 +41,8 @@ export default async function handler(req, res) {
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('');
     console.log('📋 TIENDA:', shopDomain);
-    console.log('🔑 ACCESS TOKEN:', accessToken);
+    // SECURITY: No log access tokens to prevent exposure in logs
+    console.log('🔑 ACCESS TOKEN: [REDACTED - Token stored securely]');
     console.log('💾 Estado: Guardado automáticamente');
     console.log('');
     console.log('ℹ️  El token se usará automáticamente para todas las peticiones.');
@@ -193,6 +194,9 @@ export default async function handler(req, res) {
             <button class="copy-btn" onclick="copyToClipboard('accessToken')">
                 📋 Copiar Token
             </button>
+            <p style="margin-top: 12px; font-size: 12px; color: #92400e;">
+                ⚠️ Este token es sensible. Solo muéstralo una vez durante la instalación.
+            </p>
         </div>
         
         <div class="token-box">
@@ -251,12 +255,21 @@ export default async function handler(req, res) {
     
   } catch (error) {
     console.error('❌ Error in OAuth callback:', error);
+    // SECURITY: Don't expose error details to client in production
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? error.message 
+      : 'An error occurred during app installation. Please try again or contact support.';
+    
     res.status(500).send(`
       <html>
-        <body>
-          <h1>Error installing app</h1>
-          <p>${error.message}</p>
-          <p>Check Vercel logs for more details.</p>
+        <head>
+          <title>Installation Error</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px;">
+          <h1>Installation Error</h1>
+          <p>${errorMessage}</p>
+          ${process.env.NODE_ENV === 'development' ? '<p>Check Vercel logs for more details.</p>' : ''}
         </body>
       </html>
     `);

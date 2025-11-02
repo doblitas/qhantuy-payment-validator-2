@@ -29,12 +29,21 @@ export default async function handler(req, res) {
     });
   } catch (error) {
     console.error('❌ Error starting OAuth:', error);
+    // SECURITY: Don't expose error details to client in production
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? error.message 
+      : 'An error occurred while starting the authentication process. Please try again or contact support.';
+    
     res.status(500).send(`
       <html>
-        <body>
-          <h1>Error starting OAuth</h1>
-          <p>${error.message}</p>
-          <p>Check Vercel logs for more details.</p>
+        <head>
+          <title>Authentication Error</title>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px;">
+          <h1>Authentication Error</h1>
+          <p>${errorMessage}</p>
+          ${process.env.NODE_ENV === 'development' ? '<p>Check Vercel logs for more details.</p>' : ''}
         </body>
       </html>
     `);

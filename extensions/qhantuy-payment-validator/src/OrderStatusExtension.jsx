@@ -69,7 +69,7 @@ function QhantuPaymentValidatorOrderStatus() {
     apiToken: '',
     appkey: '',
     paymentGatewayName: 'Pago QR Manual',
-    checkInterval: 5000,
+    checkInterval: 10000, // 10 segundos por defecto (reducido de 5s para evitar error 429)
     maxCheckDuration: 1800000,
     backendApiUrl: 'https://qhantuy-payment-backend.vercel.app',
     hasConfiguredSettings: false
@@ -349,22 +349,26 @@ function QhantuPaymentValidatorOrderStatus() {
       return { number: null, id: null };
     }
     
-    // Intentar múltiples formas de obtener el número de orden
-    // Priorizar: actualOrder (estructura anidada) > orderData directo > order > orderConfirmation
-    // IMPORTANTE: Misma prioridad que ThankYouExtension
+    // IMPORTANTE: En OrderStatus page, priorizar orderNumber (numérico como #1006)
+    // sobre confirmationNumber (alfanumérico como 67IUF8CDP)
+    // Esto es porque en OrderStatus page generalmente tenemos orderNumber disponible
+    // y es el identificador más estable para recuperar pedidos
     const orderNumber = actualOrder?.number ||
                        actualOrder?.name ||
-                       actualOrder?.confirmationNumber ||
-                       orderData?.confirmationNumber || 
                        orderData?.number || 
                        orderData?.name || 
                        order?.number ||
                        order?.name ||
                        orderConfirmation?.number ||
                        orderConfirmation?.name ||
-                       orderData?.id?.toString() ||
-                       actualOrder?.id?.toString() ||
                        null;
+    
+    // Obtener confirmationNumber como referencia adicional (si está disponible)
+    const confirmationNumber = actualOrder?.confirmationNumber ||
+                               orderData?.confirmationNumber ||
+                               orderConfirmation?.confirmationNumber ||
+                               order?.confirmationNumber ||
+                               null;
     
     // Intentar múltiples formas de obtener el ID
     // Extraer ID de GraphQL si está en formato gid://shopify/Order/...
@@ -416,14 +420,19 @@ function QhantuPaymentValidatorOrderStatus() {
     } else {
       console.log('✅ Identificadores extraídos correctamente (OrderStatus):', {
         orderNumber,
+        confirmationNumber,
         orderId,
         internalCode: orderNumber ? `SHOPIFY-ORDER-${orderNumber}` : (orderId ? `SHOPIFY-ORDER-${orderId}` : 'N/A')
       });
     }
     
+    // Retornar orderNumber como principal (prioritario en OrderStatus page)
+    // Usar orderNumber para internal_code ya que es más estable en OrderStatus page
     return {
-      number: orderNumber,
-      id: orderId
+      number: orderNumber, // Priorizar orderNumber en OrderStatus
+      id: orderId,
+      confirmationNumber: confirmationNumber, // Incluir separadamente para referencia
+      orderNumber: orderNumber // Incluir para claridad
     };
   }, [orderData, order, api, getSignalValue]);
   
@@ -907,6 +916,45 @@ function QhantuPaymentValidatorOrderStatus() {
     }
 
     try {
+      // PRIMERO: Verificar si el pedido ya está pagado en Shopify antes de crear QR
+      const { number: orderNumber, id: orderId } = getOrderIdentifiers();
+      if (orderNumber || orderId) {
+        try {
+          const shopDomain = shop?.myshopifyDomain || shop?.domain;
+          const checkOrderStatusUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/check-status`;
+          
+          console.log('🔍 Verificando estado de pago del pedido en Shopify (OrderStatus)...', { orderId, orderNumber });
+          
+          const statusResponse = await fetch(checkOrderStatusUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Shop-Domain': shopDomain || ''
+            },
+            body: JSON.stringify({
+              order_id: orderId || orderNumber
+            })
+          });
+          
+          if (statusResponse.ok) {
+            const statusData = await statusResponse.json();
+            console.log('📊 Estado del pedido:', statusData);
+            
+            if (statusData.financial_status === 'paid') {
+              console.log('✅ El pedido ya está pagado. No se necesita crear QR.');
+              setPaymentStatus('success');
+              // No establecer errorMessage aquí, el estado 'success' mostrará el mensaje correcto
+              isInitializingRef.current = false;
+              isCreatingCheckoutRef.current = false;
+              return;
+            }
+          }
+        } catch (statusError) {
+          console.warn('⚠️ Error verificando estado del pedido (continuando...):', statusError);
+          // Continuar con el flujo aunque falle la verificación
+        }
+      }
+      
       // Verificar si ya existe un transaction_id guardado ANTES de crear uno nuevo
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
@@ -1077,6 +1125,81 @@ function QhantuPaymentValidatorOrderStatus() {
           await storage.write('qr_image', checkoutData.image_data);
           
           console.log('✅ Transaction ID saved to storage (OrderStatus):', cleanTransactionId);
+          
+          // Guardar Transaction ID en Shopify como nota del pedido y en timeline
+          try {
+            const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
+            let shopDomain = shop?.myshopifyDomain || shop?.domain;
+            
+            // Normalizar shopDomain para asegurar formato correcto
+            if (shopDomain) {
+              shopDomain = String(shopDomain)
+                .trim()
+                .toLowerCase()
+                .replace(/^https?:\/\//, '') // Remove protocol
+                .replace(/\/$/, '') // Remove trailing slash
+                .replace(/^www\./, ''); // Remove www prefix
+              
+              // Ensure it ends with .myshopify.com
+              if (!shopDomain.includes('.myshopify.com')) {
+                shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
+              }
+            }
+            
+            // Validar que tenemos shopDomain para soporte multi-tienda
+            if (!shopDomain) {
+              console.warn('⚠️ Shop domain not available (OrderStatus), cannot save transaction ID');
+              console.warn('   Shop object:', { myshopifyDomain: shop?.myshopifyDomain, domain: shop?.domain, shopKeys: shop ? Object.keys(shop) : [] });
+            }
+            
+            // En OrderStatus page, usar orderNumber como principal (numérico como #1006)
+            const primaryIdentifier = orderNumber || orderId;
+            const internalCode = orderNumber ? `SHOPIFY-ORDER-${orderNumber}` : (orderId ? `SHOPIFY-ORDER-${orderId}` : null);
+            
+            if (orderId || orderNumber) {
+              const apiEndpointUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/save-transaction-id`;
+              
+              console.log('💾 Saving transaction ID to Shopify order (OrderStatus):', { 
+                orderId, 
+                orderNumber,
+                confirmationNumber,
+                primaryIdentifier,
+                transactionId: cleanTransactionId,
+                shopDomain 
+              });
+              
+              const saveResponse = await fetch(apiEndpointUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Shopify-Shop-Domain': shopDomain || ''
+                },
+                body: JSON.stringify({
+                  order_id: primaryIdentifier,
+                  transaction_id: cleanTransactionId,
+                  internal_code: internalCode,
+                  confirmation_number: confirmationNumber || null // Incluir si está disponible
+                })
+              });
+              
+              if (saveResponse.ok) {
+                const saveData = await saveResponse.json();
+                if (saveData.success) {
+                  console.log('✅ Transaction ID saved to Shopify successfully (OrderStatus):', cleanTransactionId);
+                } else {
+                  console.warn('⚠️ Failed to save transaction ID (OrderStatus):', saveData.message);
+                }
+              } else {
+                const errorText = await saveResponse.text();
+                console.warn('⚠️ Error saving transaction ID to Shopify (OrderStatus):', saveResponse.status, errorText);
+              }
+            } else {
+              console.warn('⚠️ Cannot save transaction ID (OrderStatus): missing order ID or number');
+            }
+          } catch (error) {
+            console.error('❌ Error saving transaction ID to Shopify (OrderStatus):', error);
+            // No bloquear el flujo si falla, pero loguear el error
+          }
         }
         
         setPaymentStatus('pending');
@@ -1248,7 +1371,22 @@ function QhantuPaymentValidatorOrderStatus() {
         return;
       }
       
-      const shopDomain = shop?.myshopifyDomain || shop?.domain;
+      // Normalizar shopDomain para asegurar formato correcto
+      let shopDomain = shop?.myshopifyDomain || shop?.domain;
+      if (shopDomain) {
+        shopDomain = String(shopDomain)
+          .trim()
+          .toLowerCase()
+          .replace(/^https?:\/\//, '') // Remove protocol
+          .replace(/\/$/, '') // Remove trailing slash
+          .replace(/^www\./, ''); // Remove www prefix
+        
+        // Ensure it ends with .myshopify.com
+        if (!shopDomain.includes('.myshopify.com')) {
+          shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
+        }
+      }
+      
       const backendApiUrl = formattedSettings.backendApiUrl;
       
       // PASO 1: Simular el callback de Qhantuy usando test-callback endpoint
@@ -1295,14 +1433,14 @@ function QhantuPaymentValidatorOrderStatus() {
         console.log('ℹ️ Continuando con consulta de deuda como fallback (OrderStatus)...');
       }
       
-      // PASO 2: Usar el servicio 3 - CONSULTA DEUDA para obtener detalles completos
-      // IMPORTANTE: Priorizar orderNumber sobre orderId para mantener consistencia
-      const formattedInternalCode = orderNumber ? `SHOPIFY-ORDER-${orderNumber}` : `SHOPIFY-ORDER-${orderId}`;
-      console.log('🔍 PASO 2: Consultando CONSULTA DEUDA con internal_code (OrderStatus):', formattedInternalCode, {
+      // PASO 2: Usar el servicio CONSULTA DE DEUDA para obtener detalles completos
+      // Según documentación: endpoint /check-payments requiere payment_ids (array de transaction IDs)
+      // Enviar transaction_id directamente (preferido) según documentación
+      console.log('🔍 PASO 2: Consultando CONSULTA DE DEUDA con transaction_id (OrderStatus):', cleanTxId, {
         orderNumber,
         orderId,
-        usingOrderNumber: !!orderNumber,
-        consistent: '✅ Using orderNumber first for consistency (matching ThankYouExtension)'
+        transactionId: cleanTxId,
+        note: '✅ Using transaction_id as per Qhantuy documentation'
       });
       
       // Construir la URL completa del endpoint
@@ -1316,7 +1454,8 @@ function QhantuPaymentValidatorOrderStatus() {
           'X-Shopify-Shop-Domain': shopDomain || ''
         },
         body: JSON.stringify({
-          internal_code: formattedInternalCode
+          transaction_id: cleanTxId,  // Enviar transaction_id directamente según documentación
+          qhantuy_api_url: apiUrl  // Enviar URL de Qhantuy desde settings de la extensión
         })
       });
 
@@ -1340,16 +1479,52 @@ function QhantuPaymentValidatorOrderStatus() {
       }
       
       const data = backendResponse.data;
-      console.log('✅ Payment check response (CONSULTA DEUDA - OrderStatus):', data);
+      console.log('✅ Payment check response (CONSULTA DE DEUDA - OrderStatus):', data);
       
-      // El servicio 3 - CONSULTA DEUDA retorna la información del pedido directamente
-      // Estructura de respuesta puede variar según la documentación
-      if (data.process) {
-        // Verificar el estado del pago desde la respuesta
-        const paymentStatus = data.payment_status || data.status || data.debt_status;
-        const payment = data.payment || data.debt || data;
+      // Según la respuesta real de Qhantuy: puede retornar items o payments
+      // Estructura: { process: boolean, message: string, items: [...] } o { process: boolean, payments: [...] }
+      // Cada item/payment tiene: id, payment_status, checkout_amount, checkout_currency
+      // payment_status puede ser: 'success', 'holding', 'rejected'
+      const paymentItems = data.items || data.payments || [];
+      
+      if (data.process && paymentItems.length > 0) {
+        // Obtener el primer item/payment del array
+        const payment = paymentItems[0];
         
-        if (paymentStatus === 'success' || paymentStatus === 'paid' || payment?.payment_status === 'success') {
+        // Verificar el estado del pago desde la respuesta
+        // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
+        // La respuesta real puede tener diferentes nombres de campos, incluso con espacios
+        // Buscar en todas las keys del objeto (algunas APIs devuelven campos con espacios al final)
+        const paymentStatus = payment.payment_status || 
+                             payment.status || 
+                             payment.paymentStatus ||
+                             payment.payment_state ||
+                             payment.state ||
+                             // Buscar en keys que puedan tener espacios: "payment_status ", "payment_status", etc.
+                             (() => {
+                               const keys = Object.keys(payment);
+                               for (const key of keys) {
+                                 const normalizedKey = key.trim().toLowerCase();
+                                 if (normalizedKey === 'payment_status' || normalizedKey === 'status') {
+                                   return payment[key];
+                                 }
+                               }
+                               return null;
+                             })();
+        
+        console.log('📊 Payment details from CONSULTA DE DEUDA (OrderStatus):', {
+          transaction_id: payment.id || payment.transaction_id || cleanTxId,
+          payment_status: paymentStatus,
+          amount: payment.checkout_amount || payment.amount,
+          currency: payment.checkout_currency || payment.currency,
+          fullPayment: payment
+        });
+        
+        // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
+        // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas
+        const isPaid = paymentStatus === 'success' || paymentStatus === 'paid' || paymentStatus === 'completed';
+        
+        if (isPaid) {
           setPaymentStatus('success');
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());
@@ -1399,9 +1574,13 @@ function QhantuPaymentValidatorOrderStatus() {
           // Todavía pendiente o en otro estado
           console.log('Payment still pending or other status (OrderStatus):', paymentStatus, payment);
         }
-      } else {
+      } else if (!data.process) {
         console.warn('⚠️ CONSULTA DEUDA returned process: false (OrderStatus)', data.message || data);
         setErrorMessage(data.message || 'El pago aún no ha sido procesado. Por favor espera unos momentos e intenta de nuevo.');
+      } else if (paymentItems.length === 0) {
+        // Si process es true pero no hay items/payments, el pago aún no ha sido procesado
+        console.log('ℹ️ Payment found but not yet processed (OrderStatus). Status:', data.message || 'pending');
+        // Mantener estado pendiente
       }
     } catch (error) {
       console.error('❌ Error checking payment status (OrderStatus):', error);
@@ -1615,7 +1794,8 @@ function QhantuPaymentValidatorOrderStatus() {
             </BlockStack>
           </Banner>
 
-          {pollingStopped ? (
+          {/* Solo mostrar botón cuando el polling se detuvo después del período automático */}
+          {pollingStopped && (
             <>
               <Banner status="warning">
                 <BlockStack spacing="tight">
@@ -1624,18 +1804,17 @@ function QhantuPaymentValidatorOrderStatus() {
                     La verificación automática se detuvo después de 2 minutos para evitar consultas excesivas.
                   </Text>
                   <Text size="small">
-                    Si ya completaste el pago, haz clic en el botón de abajo para verificar manualmente.
+                    Si ya completaste el pago, haz clic en el botón de abajo para avisar y verificar manualmente.
+                  </Text>
+                  <Text size="small" appearance="subdued">
+                    💡 El servidor continuará verificando automáticamente cada hora durante las próximas 24 horas.
                   </Text>
                 </BlockStack>
               </Banner>
               <Button onPress={checkPaymentStatus} disabled={isChecking}>
-                {isChecking ? '🔄 Verificando Manualmente...' : '🔍 Verificar Pago Manualmente'}
+                {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
               </Button>
             </>
-          ) : (
-            <Button onPress={checkPaymentStatus} disabled={isChecking}>
-              {isChecking ? '🔄 Verificando...' : '🔄 Verificar Pago'}
-            </Button>
           )}
 
           {!pollingStopped && (
@@ -1645,7 +1824,10 @@ function QhantuPaymentValidatorOrderStatus() {
                   💡 La verificación automática está activa. Se detendrá después de 2 minutos.
                 </Text>
                 <Text size="small">
-                  Puedes recargar esta página en cualquier momento para ver el estado.
+                  Si el pago toma más tiempo, el servidor verificará automáticamente cada hora durante 24 horas.
+                </Text>
+                <Text size="small">
+                  Puedes recargar esta página en cualquier momento. Si ya pagaste, haz clic en "Avisar y verificar" cuando aparezca el botón.
                 </Text>
               </BlockStack>
             </Banner>

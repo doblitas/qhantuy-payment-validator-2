@@ -55,7 +55,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       qhantuy_api_token: settings.qhantuy_api_token || settingsRaw?.qhantuy_api_token || '',
       qhantuy_appkey: settings.qhantuy_appkey || settingsRaw?.qhantuy_appkey || '',
       payment_gateway_name: settings.payment_gateway_name || settingsRaw?.payment_gateway_name || sharedSettings?.payment_gateway_name || 'Pago QR Manual',
-      check_interval: settings.check_interval || settingsRaw?.check_interval || sharedSettings?.check_interval || 5,
+      check_interval: settings.check_interval || settingsRaw?.check_interval || sharedSettings?.check_interval || 10,
       max_check_duration: settings.max_check_duration || settingsRaw?.max_check_duration || sharedSettings?.max_check_duration || 30,
       backend_api_url: settings.backend_api_url || settingsRaw?.backend_api_url || sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
       source: sourceExtension,
@@ -67,7 +67,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       qhantuy_api_token: sharedSettings?.qhantuy_api_token || '',
       qhantuy_appkey: sharedSettings?.qhantuy_appkey || '',
       payment_gateway_name: sharedSettings?.payment_gateway_name || 'Pago QR Manual',
-      check_interval: sharedSettings?.check_interval || 5,
+      check_interval: sharedSettings?.check_interval || 10,
       max_check_duration: sharedSettings?.max_check_duration || 30,
       backend_api_url: sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
       source: sharedSettings?.source || 'default',
@@ -108,7 +108,7 @@ export function formatSettings(mergedSettings) {
     apiToken: mergedSettings.qhantuy_api_token || '',
     appkey: mergedSettings.qhantuy_appkey || '',
     paymentGatewayName: mergedSettings.payment_gateway_name || 'Pago QR Manual',
-    checkInterval: (mergedSettings.check_interval || 5) * 1000, // Convertir a milisegundos
+    checkInterval: (mergedSettings.check_interval || 10) * 1000, // Convertir a milisegundos (default: 10 segundos para evitar 429)
     maxCheckDuration: (mergedSettings.max_check_duration || 30) * 60 * 1000, // Convertir a milisegundos
     backendApiUrl: mergedSettings.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
     source: mergedSettings.source || 'default',

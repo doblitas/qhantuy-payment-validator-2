@@ -20,7 +20,7 @@
     },
     {
       "source": "/api/health",
-      "destination": "/api/health.js"
+      "destination": "/api/verify.js"
     },
     {
       "source": "/api/verify",
@@ -28,7 +28,7 @@
     },
     {
       "source": "/api/check-status",
-      "destination": "/api/check-status.js"
+      "destination": "/api/verify.js"
     },
     {
       "source": "/auth/callback",
@@ -45,6 +45,30 @@
     {
       "source": "/api/auth/callback",
       "destination": "/api/auth-callback.js"
+    },
+    {
+      "source": "/api/orders/save-transaction-id",
+      "destination": "/api/orders/save-transaction-id.js"
+    },
+    {
+      "source": "/api/orders/check-status",
+      "destination": "/api/orders/check-status.js"
+    },
+    {
+      "source": "/api/privacy",
+      "destination": "/api/privacy.js"
+    },
+    {
+      "source": "/api/terms",
+      "destination": "/api/terms.js"
+    },
+    {
+      "source": "/api/register-token",
+      "destination": "/api/token-register.js"
+    },
+    {
+      "source": "/api/token-register",
+      "destination": "/api/token-register.js"
     }
   ]
 }
