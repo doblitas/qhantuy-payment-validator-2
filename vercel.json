@@ -56,11 +56,11 @@
     },
     {
       "source": "/api/privacy",
-      "destination": "/api/privacy.js"
+      "destination": "/api/legal.js"
     },
     {
       "source": "/api/terms",
-      "destination": "/api/terms.js"
+      "destination": "/api/legal.js"
     },
     {
       "source": "/api/register-token",

@@ -61,32 +61,73 @@ export default async function handler(req, res) {
     console.error('Error checking OAuth token:', error);
   }
 
-  // Verificar Vercel KV
-  let kvConnected = false;
-  let kvStatus = 'not_available';
-  let kvError = null;
+  // Verificar Redis Storage
+  let redisConnected = false;
+  let redisStatus = 'not_available';
+  let redisError = null;
+  
+  // Priority: qhantuy_REDIS_URL > REDIS_URL > KV_REST_API_URL
+  const redisUrl = process.env.qhantuy_REDIS_URL || process.env.REDIS_URL;
+  const kvUrl = process.env.KV_REST_API_URL;
+  
   try {
-    const { kv } = await import('@vercel/kv');
-    if (kv) {
+    // Try Redis directly first (qhantuy_REDIS_URL or REDIS_URL)
+    if (redisUrl) {
       try {
-        await kv.ping();
-        kvConnected = true;
-        kvStatus = 'connected';
-      } catch (error) {
-        kvStatus = 'error';
-        kvError = error.message;
+        // Try ioredis
+        const Redis = (await import('ioredis')).default;
+        const redis = new Redis(redisUrl, {
+          connectTimeout: 3000,
+          retryStrategy: () => null,
+          lazyConnect: true,
+        });
+        await redis.connect();
+        await redis.ping();
+        await redis.quit();
+        redisConnected = true;
+        redisStatus = 'connected';
+      } catch (ioredisError) {
+        // Try redis package
+        try {
+          const { createClient } = await import('redis');
+          const redis = createClient({ url: redisUrl });
+          await redis.connect();
+          await redis.ping();
+          await redis.quit();
+          redisConnected = true;
+          redisStatus = 'connected';
+        } catch (redisError) {
+          redisStatus = 'error';
+          redisError = redisError.message || ioredisError.message;
+        }
       }
     }
+    // Try @vercel/kv only if Redis URL is not available (backward compatibility)
+    else if (kvUrl && process.env.KV_REST_API_TOKEN) {
+      try {
+        const { kv } = await import('@vercel/kv');
+        await kv.ping();
+        redisConnected = true;
+        redisStatus = 'connected';
+      } catch (error) {
+        redisStatus = 'error';
+        redisError = error.message;
+      }
+    }
+    else {
+      redisStatus = 'not_available';
+      redisError = 'No Redis URL configured. Set qhantuy_REDIS_URL or REDIS_URL';
+    }
   } catch (error) {
-    kvStatus = 'not_available';
-    kvError = 'Vercel KV not configured or not available';
+    redisStatus = 'error';
+    redisError = error.message || 'Redis connection failed';
   }
 
   // Si es health check, devolver formato health
   if (isHealthCheck) {
     const checks = {
       server: true,
-      vercel_kv: kvConnected,
+      redis: redisConnected,
       oauth_token: oauthTokenExists,
       shopify_api: false,
       environment_vars: false
@@ -97,8 +138,8 @@ export default async function handler(req, res) {
       app: 'Qhantuy Payment Validator',
       platform: 'Vercel',
       shop: shopDomain || 'not specified',
-      kv_status: kvStatus,
-      kv_error: kvError
+      redis_status: redisStatus,
+      redis_error: redisError
     };
 
     // Check OAuth token details
@@ -130,7 +171,7 @@ export default async function handler(req, res) {
     };
 
     const allHealthy = checks.server && 
-                      checks.vercel_kv && 
+                      checks.redis && 
                       checks.oauth_token && 
                       checks.shopify_api && 
                       checks.environment_vars;
@@ -163,14 +204,14 @@ export default async function handler(req, res) {
             : 'No es crítico - Shopify puede regenerarlo si es necesario. La app funciona aunque no esté en storage.',
           critical: false
         },
-        vercelKV: {
-          configured: kvConnected,
-          message: kvConnected ? 'Base de datos conectada' : 'Base de datos no conectada',
-          note: kvConnected 
-            ? 'Persistencia de datos activa'
-            : 'No crítico - Se usa almacenamiento temporal. Para producción, conecta Vercel KV.',
-          critical: false
-        },
+            redis: {
+              configured: redisConnected,
+              message: redisConnected ? 'Redis conectado' : 'Redis no conectado',
+              note: redisConnected 
+                ? 'Persistencia de datos activa'
+                : 'No crítico - Se usa almacenamiento temporal. Para producción, conecta Redis Storage.',
+              critical: false
+            },
         extensionSettings: {
           configured: null,
           message: 'Requiere verificación manual',
@@ -194,14 +235,14 @@ export default async function handler(req, res) {
     timestamp: new Date().toISOString(),
     checks: {
       backend_connection: true,
-      vercel_kv: kvConnected,
+      redis: redisConnected,
       oauth_token: oauthTokenExists,
       token_valid: false,
       shopify_api_config: false
     },
     details: {
-      kv_status: kvStatus,
-      kv_error: kvError
+      redis_status: redisStatus,
+      redis_error: redisError
     }
   };
 
@@ -236,7 +277,7 @@ export default async function handler(req, res) {
                       verification.checks.token_valid &&
                       verification.checks.shopify_api_config;
 
-  const overallSuccess = allCritical && verification.checks.vercel_kv;
+      const overallSuccess = allCritical && verification.checks.redis;
 
   return res.status(200).json({
     success: overallSuccess,

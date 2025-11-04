@@ -31,10 +31,48 @@ export default async function handler(req, res) {
     
     // IMPORTANTE: El accessToken está aquí
     const accessToken = session.accessToken;
-    const shopDomain = session.shop;
+    let shopDomain = session.shop;
+    
+    // Normalizar shop domain antes de guardar (igual que en storage.js)
+    if (shopDomain) {
+      shopDomain = String(shopDomain)
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '') // Remove protocol
+        .replace(/\/$/, '') // Remove trailing slash
+        .replace(/^www\./, ''); // Remove www prefix if present
+      
+      // Ensure it ends with .myshopify.com or add it if missing
+      if (!shopDomain.includes('.myshopify.com')) {
+        shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
+      }
+    }
+    
+    // Validar que tenemos los datos necesarios
+    if (!accessToken || !shopDomain) {
+      console.error('❌ Missing accessToken or shopDomain:', {
+        hasAccessToken: !!accessToken,
+        hasShopDomain: !!shopDomain,
+        shopDomain: shopDomain
+      });
+      throw new Error('Missing accessToken or shopDomain from OAuth callback');
+    }
+    
+    console.log('📋 Normalized shop domain:', shopDomain);
+    console.log('🔑 Access token preview:', accessToken ? `${accessToken.substring(0, 10)}...` : 'MISSING');
     
     // ✅ GUARDAR AUTOMÁTICAMENTE EN EL SERVIDOR (PERSISTENTE)
     await storeAccessToken(shopDomain, accessToken);
+    
+    // Verificar que se guardó correctamente
+    const { hasAccessToken } = await import('../web/backend/storage.js');
+    const tokenStored = await hasAccessToken(shopDomain);
+    if (!tokenStored) {
+      console.error('⚠️  WARNING: Token was stored but verification failed for:', shopDomain);
+      console.error('   This might indicate a Redis connection issue.');
+    } else {
+      console.log('✅ Token storage verified successfully for:', shopDomain);
+    }
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
     console.log('✅ APP INSTALADA EXITOSAMENTE');
     console.log('✅ TOKEN GUARDADO AUTOMÁTICAMENTE EN EL SERVIDOR');
