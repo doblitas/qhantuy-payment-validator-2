@@ -85,6 +85,11 @@ export async function handleQhantuCallback(req, res) {
 
         // Opción 1: Intentar con servicio check-payments (por transaction_id/payment_ids)
         console.log('🔍 Consulting Qhantuy check-payments service with transaction_id:', finalTransactionId);
+        
+        // Crear AbortController para timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+        
         const checkPaymentsResponse = await fetch(`${apiUrl}/check-payments`, {
           method: 'POST',
           headers: {
@@ -94,8 +99,17 @@ export async function handleQhantuCallback(req, res) {
           body: JSON.stringify({
             appkey: appkey,
             payment_ids: [finalTransactionId]
-          })
+          }),
+          signal: controller.signal
+        }).catch(error => {
+          clearTimeout(timeoutId);
+          if (error.name === 'AbortError') {
+            throw new Error('Qhantuy API timeout: Request took longer than 30 seconds');
+          }
+          throw error;
         });
+        
+        clearTimeout(timeoutId);
 
         if (checkPaymentsResponse.ok) {
           const checkPaymentsData = await checkPaymentsResponse.json();
@@ -216,13 +230,38 @@ export async function handleQhantuCallback(req, res) {
       numericOrderId = internal_code.replace('SHOPIFY-ORDER-', '');
     }
     
+    // Obtener información del pedido para usar la moneda correcta (no la de Qhantuy)
+    const rest = new shopify.clients.Rest({ session });
+    let orderCurrency = checkout_currency_code; // Fallback a la moneda de Qhantuy
+    let orderAmount = checkout_amount; // Fallback al amount de Qhantuy
+    let realShopDomain = session.shop; // Usar el dominio real de la sesión (ya normalizado)
+    
+    try {
+      const orderResponse = await rest.get({
+        path: `orders/${numericOrderId}`
+      });
+      const order = orderResponse.body.order;
+      
+      // Usar la moneda del pedido de Shopify (no la de Qhantuy)
+      orderCurrency = order.currency || checkout_currency_code;
+      orderAmount = order.total_price || checkout_amount;
+      
+      console.log('📊 Order currency from Shopify:', orderCurrency, '(Qhantuy sent:', checkout_currency_code + ')');
+      console.log('💰 Order amount from Shopify:', orderAmount, '(Qhantuy sent:', checkout_amount + ')');
+    } catch (orderError) {
+      console.warn('⚠️ Could not fetch order to get currency. Using Qhantuy values:', orderError.message);
+    }
+    
     console.log('Processing callback for order:', {
       original_internal_code: internal_code,
       parsed_order_id: numericOrderId,
       transaction_id: finalTransactionId,
       status: finalStatus,
-      amount: checkout_amount,
-      currency: checkout_currency_code
+      amount: orderAmount,
+      currency: orderCurrency,
+      shop_domain: realShopDomain,
+      qhantuy_currency: checkout_currency_code,
+      qhantuy_amount: checkout_amount
     });
 
     // Create GraphQL client
@@ -261,9 +300,10 @@ export async function handleQhantuCallback(req, res) {
       console.log('ℹ️ Payment verification note already exists for this transaction_id. Skipping duplicate.');
     } else {
       // Agregar nota de verificación sin reemplazar la nota existente
+      // Usar moneda del pedido de Shopify (no la de Qhantuy)
       const verificationNote = `Qhantuy Payment Verified (Callback)
 Transaction ID: ${finalTransactionId}
-Amount: ${checkout_amount} ${checkout_currency_code}
+Amount: ${orderAmount} ${orderCurrency}
 Status: ${finalStatus}
 Timestamp: ${new Date().toISOString()}`;
       
@@ -308,40 +348,62 @@ Timestamp: ${new Date().toISOString()}`;
     }
 
     // Mark order as paid using REST API
-    const rest = new shopify.clients.Rest({ session });
+    // (rest ya está inicializado arriba)
     
-    // Get the order first to check current status
+    // Get the order first to check current status (si no se obtuvo antes)
     let order;
-    try {
-      const orderResponse = await rest.get({
-        path: `orders/${numericOrderId}`
-      });
-      order = orderResponse.body.order;
-      console.log('Current order financial_status:', order.financial_status);
-    } catch (error) {
-      console.error('Error fetching order:', error);
-      return res.status(404).json({
-        success: false,
-        message: `Order not found: ${numericOrderId}`,
-        error: error.message
-      });
+    if (!orderCurrency || orderCurrency === checkout_currency_code) {
+      // Si no se obtuvo el pedido antes, obtenerlo ahora
+      try {
+        const orderResponse = await rest.get({
+          path: `orders/${numericOrderId}`
+        });
+        order = orderResponse.body.order;
+        orderCurrency = order.currency || orderCurrency;
+        orderAmount = order.total_price || orderAmount;
+        console.log('Current order financial_status:', order.financial_status);
+      } catch (error) {
+        console.error('Error fetching order:', error);
+        return res.status(404).json({
+          success: false,
+          message: `Order not found: ${numericOrderId}`,
+          error: error.message
+        });
+      }
+    } else {
+      // Ya tenemos el pedido, solo necesitamos verificar el estado
+      try {
+        const orderResponse = await rest.get({
+          path: `orders/${numericOrderId}`
+        });
+        order = orderResponse.body.order;
+        console.log('Current order financial_status:', order.financial_status);
+      } catch (error) {
+        console.error('Error fetching order:', error);
+        return res.status(404).json({
+          success: false,
+          message: `Order not found: ${numericOrderId}`,
+          error: error.message
+        });
+      }
     }
 
     // Update order to mark as authorized/paid if not already paid
-    // Usar una transacción de tipo "authorization" para marcar el pedido como authorized
-    // Shopify automáticamente mostrará el pedido como pagado cuando el monto coincide
+    // Usar una transacción de tipo "sale" para marcar el pedido como paid directamente
+    // IMPORTANTE: Usar moneda del pedido (orderCurrency), no la de Qhantuy
     if (order.financial_status !== 'paid' && order.financial_status !== 'authorized') {
       try {
-        // Crear una transacción de tipo "authorization" que marca el pedido como authorized
-        // Esto actualiza el estado financiero del pedido a "authorized" y se mostrará como pagado
-        const authorizeTransaction = await rest.post({
+        // Crear una transacción de tipo "sale" que marca el pedido como paid directamente
+        // Esto actualiza el estado financiero del pedido a "paid" directamente
+        // Usar moneda del pedido (orderCurrency), no la de Qhantuy (checkout_currency_code)
+        const saleTransaction = await rest.post({
           path: `orders/${numericOrderId}/transactions`,
           data: {
             transaction: {
-              kind: 'authorization',
+              kind: 'sale',
               status: 'success',
-              amount: checkout_amount || order.total_price,
-              currency: checkout_currency_code || order.currency,
+              amount: orderAmount || order.total_price,
+              currency: orderCurrency || order.currency,
               gateway: 'manual',
               source: 'external',
               message: `Qhantuy QR Payment - Transaction ID: ${finalTransactionId}`
@@ -349,7 +411,8 @@ Timestamp: ${new Date().toISOString()}`;
           }
         });
 
-        console.log('✅ Authorization transaction created (order marked as authorized):', authorizeTransaction.body);
+        console.log('✅ Sale transaction created (order marked as paid):', saleTransaction.body);
+        console.log('   Used currency:', orderCurrency, '(from Shopify order, not Qhantuy)');
         
         // Verificar el estado actualizado del pedido
         const updatedOrderResponse = await rest.get({
@@ -357,7 +420,7 @@ Timestamp: ${new Date().toISOString()}`;
         });
         const updatedOrder = updatedOrderResponse.body.order;
         
-        console.log('✅ Order updated. New financial_status:', updatedOrder.financial_status, '(should be authorized or paid)');
+        console.log('✅ Order updated. New financial_status:', updatedOrder.financial_status, '(should be paid)');
         
         // Update order tags to include payment status
         const tags = order.tags ? `${order.tags}, qhantuy-paid` : 'qhantuy-paid';
@@ -685,6 +748,10 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
     // Según documentación: usar endpoint /check-payments con payment_ids
     console.log('🔍 Verifying payment with Qhantuy /check-payments:', sanitizedTransactionId);
     
+    // Crear AbortController para timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+    
     const response = await fetch(`${apiUrl}/check-payments`, {
       method: 'POST',
       headers: {
@@ -694,8 +761,17 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
       body: JSON.stringify({
         appkey: appkey,
         payment_ids: [sanitizedTransactionId]
-      })
+      }),
+      signal: controller.signal
+    }).catch(error => {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        return { ok: false, status: 408, statusText: 'Request Timeout', json: async () => ({ error: 'Timeout: Qhantuy API took longer than 30 seconds' }) };
+      }
+      throw error;
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       console.error('❌ Qhantuy API error:', response.status, response.statusText);
@@ -907,6 +983,10 @@ export async function checkDebtStatus(req, res) {
     // Call Qhantuy API using correct endpoint: /check-payments
     console.log('📞 Calling Qhantuy /check-payments with payment_ids:', paymentIds);
     
+    // Crear AbortController para timeout (30 segundos)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
     const response = await fetch(`${apiUrl}/check-payments`, {
       method: 'POST',
       headers: {
@@ -916,8 +996,17 @@ export async function checkDebtStatus(req, res) {
       body: JSON.stringify({
         appkey: appkey,
         payment_ids: paymentIds
-      })
+      }),
+      signal: controller.signal
+    }).catch(error => {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Qhantuy API timeout: Request took longer than 30 seconds. Please try again.');
+      }
+      throw error;
     });
+    
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'No error details');
@@ -1355,24 +1444,60 @@ export async function saveTransactionId(req, res) {
     }
 
     // Verificar si ya existe una nota con este transaction_id para evitar duplicados
+    // También verificar si hay una nota reciente (dentro de los últimos 60 segundos) para evitar duplicados casi simultáneos
     const transactionIdPattern = new RegExp(`Transaction ID:\\s*${transaction_id}\\b`, 'i');
-    if (existingNote && transactionIdPattern.test(existingNote)) {
-      console.log('ℹ️ Transaction ID already exists in order notes. Skipping duplicate note.');
-      return res.status(200).json({
-        success: true,
-        message: 'Transaction ID already exists in order notes',
-        transaction_id: transaction_id,
-        order_id: numericOrderId,
-        shop: shopDomain
-      });
+    const qrPaymentCreatedPattern = /Qhantuy QR Payment Created[\s\S]*?Created at: ([^\n]+)/gi;
+    
+    if (existingNote) {
+      // Verificar si el transaction_id ya existe
+      if (transactionIdPattern.test(existingNote)) {
+        console.log('ℹ️ Transaction ID already exists in order notes. Skipping duplicate note.');
+        return res.status(200).json({
+          success: true,
+          message: 'Transaction ID already exists in order notes',
+          transaction_id: transaction_id,
+          order_id: numericOrderId,
+          shop: shopDomain
+        });
+      }
+      
+      // Verificar si hay una nota reciente (dentro de los últimos 60 segundos)
+      // Esto previene múltiples notas casi simultáneas con diferentes transaction IDs
+      const recentNoteMatches = [...existingNote.matchAll(qrPaymentCreatedPattern)];
+      const now = new Date();
+      
+      for (const match of recentNoteMatches) {
+        if (match[1]) {
+          try {
+            const noteDate = new Date(match[1]);
+            const secondsDiff = (now - noteDate) / 1000;
+            
+            // Si hay una nota creada en los últimos 60 segundos, podría ser un duplicado
+            if (secondsDiff < 60 && secondsDiff >= 0) {
+              console.log(`⚠️ Recent note found (${Math.round(secondsDiff)}s ago). Possible duplicate. Skipping to prevent spam.`);
+              return res.status(200).json({
+                success: true,
+                message: 'Recent note found. Skipping to prevent duplicate notes.',
+                transaction_id: transaction_id,
+                order_id: numericOrderId,
+                shop: shopDomain,
+                note_age_seconds: Math.round(secondsDiff)
+              });
+            }
+          } catch (dateError) {
+            // Ignorar errores de parsing de fecha
+          }
+        }
+      }
     }
     
     // Build note with Transaction ID
+    // IMPORTANTE: Usar realShopDomain (dominio real de la sesión), no shopDomain (puede ser ID interno)
     const transactionNote = `Qhantuy QR Payment Created
 Transaction ID: ${transaction_id}
 ${confirmation_number ? `Confirmation Number: ${confirmation_number}\n` : ''}${orderName ? `Order Number: ${orderName}\n` : ''}Internal Code: ${internal_code || 'N/A'}
 Created at: ${new Date().toISOString()}
-Shop: ${shopDomain}`;
+Shop: ${realShopDomain}`;
     
     const newNote = existingNote 
       ? `${existingNote}\n\n---\n${transactionNote}`
