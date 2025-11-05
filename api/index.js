@@ -21,7 +21,100 @@ export default async function handler(req, res) {
     if (hostParam && shopParam) {
       // Shopify está cargando la app embebida
       // Esto significa que OAuth está configurado (Shopify ya validó la instalación)
-      const shopDomain = String(shopParam).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      let shopDomain = String(shopParam).trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/$/, '');
+      
+      // Intentar obtener el dominio real desde el token registrado
+      // Si shopDomain es un ID interno (ej: e3d607.myshopify.com), buscar el dominio real
+      try {
+        // Importar función para obtener cliente Redis
+        // Nota: getRedisClient no está exportada, usamos la lógica directamente
+        const redisUrl = process.env.qhantuy_REDIS_URL || process.env.REDIS_URL || process.env.KV_REST_API_URL;
+        
+        // Normalizar shop domain para buscar
+        let normalizedForSearch = shopDomain;
+        if (!normalizedForSearch.includes('.myshopify.com')) {
+          normalizedForSearch = `${normalizedForSearch}.myshopify.com`;
+        }
+        
+        // Intentar buscar en Redis todos los tokens registrados
+        // Si shopDomain es un ID interno, buscar el dominio real que tiene token
+        let redis = null;
+        if (redisUrl) {
+          try {
+            // Intentar usar ioredis
+            const Redis = (await import('ioredis')).default;
+            redis = new Redis(redisUrl, {
+              connectTimeout: 3000,
+              retryStrategy: () => null,
+              lazyConnect: true,
+            });
+            await redis.connect();
+          } catch (ioredisError) {
+            try {
+              // Intentar usar redis package
+              const { createClient } = await import('redis');
+              redis = createClient({ url: redisUrl });
+              await redis.connect();
+            } catch (redisError) {
+              console.warn('⚠️ Could not connect to Redis:', redisError.message);
+            }
+          }
+        }
+        
+        if (redis) {
+          try {
+            // Buscar todos los keys de tokens registrados
+            const allTokenKeys = await redis.keys('shop:*:token');
+            
+            if (allTokenKeys.length > 0) {
+              console.log('🔍 Found registered shop tokens:', allTokenKeys.length);
+              
+              // Extraer los dominios de los keys
+              const registeredDomains = allTokenKeys.map(key => {
+                // Formato: shop:DOMAIN:token
+                const match = key.match(/^shop:(.+):token$/);
+                return match ? match[1] : null;
+              }).filter(Boolean);
+              
+              console.log('📋 Registered shop domains:', registeredDomains);
+              
+              // Si el shopDomain recibido no tiene token pero hay otros registrados
+              // Y el shopDomain parece ser un ID interno (ej: e3d607.myshopify.com)
+              // Usar el primer dominio registrado que tenga token
+              const isInternalId = normalizedForSearch.match(/^[a-z0-9]{6,8}\.myshopify\.com$/);
+              
+              if (isInternalId && registeredDomains.length > 0) {
+                // Verificar si hay un token para este ID interno
+                const tokenForInternalId = await redis.get(`shop:${normalizedForSearch}:token`);
+                
+                if (!tokenForInternalId) {
+                  // No hay token para el ID interno, usar el dominio real registrado
+                  // Asumimos que el primer dominio registrado es el dominio real
+                  const realDomain = registeredDomains[0];
+                  console.log('✅ Found real domain:', realDomain, '(shopDomain was internal ID:', normalizedForSearch + ')');
+                  shopDomain = realDomain;
+                  normalizedForSearch = realDomain;
+                }
+              }
+            }
+          } catch (redisError) {
+            console.warn('⚠️ Could not search Redis for shop domains:', redisError.message);
+          } finally {
+            // Cerrar conexión Redis
+            try {
+              if (redis && typeof redis.quit === 'function') {
+                await redis.quit();
+              } else if (redis && typeof redis.disconnect === 'function') {
+                await redis.disconnect();
+              }
+            } catch (closeError) {
+              // Ignorar errores al cerrar
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Could not check token for shop domain:', error.message);
+      }
       
       // Verificar estado completo usando el nuevo endpoint de checklist
       let statusCheck = null;

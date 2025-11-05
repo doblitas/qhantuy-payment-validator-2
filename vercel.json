@@ -69,6 +69,18 @@
     {
       "source": "/api/token-register",
       "destination": "/api/token-register.js"
+    },
+    {
+      "source": "/api/debug-tokens",
+      "destination": "/api/tokens.js"
+    },
+    {
+      "source": "/api/cleanup-tokens",
+      "destination": "/api/tokens.js"
+    },
+    {
+      "source": "/api/tokens",
+      "destination": "/api/tokens.js"
     }
   ]
 }

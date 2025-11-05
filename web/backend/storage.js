@@ -189,12 +189,31 @@ export async function getAccessToken(shopDomain) {
     // Try to get from Redis
     try {
       const tokenKey = `shop:${normalizedShop}:token`;
+      console.log(`🔍 Looking for token in Redis with key: ${tokenKey}`);
+      console.log(`   Normalized shop domain: ${normalizedShop}`);
+      console.log(`   Original shop domain: ${shopDomain}`);
+      
       const token = await redis.get(tokenKey);
       if (token) {
         console.log(`✅ Token retrieved from Redis for: ${normalizedShop}`);
+        console.log(`   Token preview: ${token.substring(0, 15)}...`);
         return token;
       } else {
         console.log(`ℹ️  No token found in Redis for: ${normalizedShop} (key: ${tokenKey})`);
+        
+        // Debug: Try to list all shop tokens to see what's actually stored
+        try {
+          // Try to find similar keys (this is a debug operation)
+          console.log(`🔍 Debug: Checking if Redis has any shop tokens...`);
+          // Note: Redis KEYS command can be slow, but useful for debugging
+          // We'll only do this in development or when explicitly requested
+          if (process.env.DEBUG_REDIS === 'true') {
+            const allKeys = await redis.keys('shop:*:token');
+            console.log(`   Found ${allKeys.length} shop tokens in Redis:`, allKeys);
+          }
+        } catch (debugError) {
+          // Ignore debug errors
+        }
       }
     } catch (error) {
       console.error('❌ Error retrieving token from Redis:', error);

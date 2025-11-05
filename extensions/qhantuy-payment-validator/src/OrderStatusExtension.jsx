@@ -127,9 +127,11 @@ function QhantuPaymentValidatorOrderStatus() {
   useEffect(() => {
     const verifyConnections = async () => {
       try {
-        const shopDomain = shop?.myshopifyDomain || shop?.domain;
+        // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
+        const shopDomain = shop?.domain || shop?.myshopifyDomain;
         if (!shopDomain) {
           console.log('⚠️ Shop domain not available for verification (OrderStatus)');
+          console.log('   Shop object:', { domain: shop?.domain, myshopifyDomain: shop?.myshopifyDomain });
           return;
         }
 
@@ -920,7 +922,8 @@ function QhantuPaymentValidatorOrderStatus() {
       const { number: orderNumber, id: orderId } = getOrderIdentifiers();
       if (orderNumber || orderId) {
         try {
-          const shopDomain = shop?.myshopifyDomain || shop?.domain;
+          // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
+          const shopDomain = shop?.domain || shop?.myshopifyDomain;
           const checkOrderStatusUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/check-status`;
           
           console.log('🔍 Verificando estado de pago del pedido en Shopify (OrderStatus)...', { orderId, orderNumber });
@@ -1129,7 +1132,18 @@ function QhantuPaymentValidatorOrderStatus() {
           // Guardar Transaction ID en Shopify como nota del pedido y en timeline
           try {
             const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
-            let shopDomain = shop?.myshopifyDomain || shop?.domain;
+            // IMPORTANTE: shop.domain es el dominio real de la tienda (ej: joyeriaimperio.myshopify.com)
+            // shop.myshopifyDomain puede ser un ID interno diferente (ej: e3d607.myshopify.com)
+            // Usar shop.domain primero, que es el dominio real registrado
+            let shopDomain = shop?.domain || shop?.myshopifyDomain;
+            
+            // Debug: Log shop object para ver qué valores tiene
+            console.log('🔍 Shop domain debug (OrderStatus):', {
+              'shop.domain': shop?.domain,
+              'shop.myshopifyDomain': shop?.myshopifyDomain,
+              'selected': shopDomain,
+              'shopKeys': shop ? Object.keys(shop) : []
+            });
             
             // Normalizar shopDomain para asegurar formato correcto
             if (shopDomain) {
@@ -1372,7 +1386,15 @@ function QhantuPaymentValidatorOrderStatus() {
       }
       
       // Normalizar shopDomain para asegurar formato correcto
-      let shopDomain = shop?.myshopifyDomain || shop?.domain;
+      // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
+      let shopDomain = shop?.domain || shop?.myshopifyDomain;
+      
+      console.log('🔍 Shop domain for checkDebtStatus (OrderStatus):', {
+        'shop.domain': shop?.domain,
+        'shop.myshopifyDomain': shop?.myshopifyDomain,
+        'selected': shopDomain
+      });
+      
       if (shopDomain) {
         shopDomain = String(shopDomain)
           .trim()
@@ -1386,8 +1408,6 @@ function QhantuPaymentValidatorOrderStatus() {
           shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
         }
       }
-      
-      const backendApiUrl = formattedSettings.backendApiUrl;
       
       // PASO 1: Simular el callback de Qhantuy usando test-callback endpoint
       // Esto simula que Qhantuy confirmó el pago
@@ -1443,7 +1463,21 @@ function QhantuPaymentValidatorOrderStatus() {
         note: '✅ Using transaction_id as per Qhantuy documentation'
       });
       
-      // Construir la URL completa del endpoint
+      // Normalizar backendApiUrl para evitar URLs duplicadas
+      let backendApiUrl = formattedSettings.backendApiUrl;
+      
+      // Limpiar backendApiUrl: remover cualquier path que no sea la base URL
+      if (backendApiUrl) {
+        try {
+          const urlObj = new URL(backendApiUrl);
+          backendApiUrl = `${urlObj.protocol}//${urlObj.host}`;
+          console.log('📋 Normalized backendApiUrl (OrderStatus):', backendApiUrl);
+        } catch (error) {
+          console.warn('⚠️ Could not parse backendApiUrl, using as-is:', backendApiUrl);
+        }
+      }
+      
+      // Construir la URL completa del endpoint (asegurarse de que no tenga paths duplicados)
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
       console.log('Calling backend check-debt endpoint (OrderStatus):', checkDebtUrl);
       
@@ -1532,12 +1566,30 @@ function QhantuPaymentValidatorOrderStatus() {
           // Actualizar el pedido en Shopify
           try {
             const { number: orderNumber, id: orderId } = getOrderIdentifiers();
-            const shopDomain = shop?.myshopifyDomain || shop?.domain;
+            // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
+            const shopDomain = shop?.domain || shop?.myshopifyDomain;
+            
+            console.log('🔍 Shop domain for confirmPayment (OrderStatus):', {
+              'shop.domain': shop?.domain,
+              'shop.myshopifyDomain': shop?.myshopifyDomain,
+              'selected': shopDomain
+            });
             
             if (orderId || orderNumber) {
               // Construir URL del backend API (con valor por defecto)
               // Usar backendApiUrl de formattedSettings (ya sincronizado)
-              const apiEndpointUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/confirm-payment`;
+              // Normalizar backendApiUrl para evitar URLs duplicadas
+              let backendApiUrl = formattedSettings.backendApiUrl;
+              if (backendApiUrl) {
+                try {
+                  const urlObj = new URL(backendApiUrl);
+                  backendApiUrl = `${urlObj.protocol}//${urlObj.host}`;
+                } catch (error) {
+                  console.warn('⚠️ Could not parse backendApiUrl, using as-is:', backendApiUrl);
+                }
+              }
+              
+              const apiEndpointUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/confirm-payment`;
               
               console.log('Updating Shopify order (OrderStatus):', { orderId, orderNumber, transactionId, apiEndpointUrl });
               
@@ -1549,7 +1601,8 @@ function QhantuPaymentValidatorOrderStatus() {
                 },
                 body: JSON.stringify({
                   order_id: orderId || orderNumber,
-                  transaction_id: cleanTxId
+                  transaction_id: cleanTxId,
+                  qhantuy_api_url: formattedSettings.apiUrl  // Enviar URL de Qhantuy desde settings
                 })
               });
               

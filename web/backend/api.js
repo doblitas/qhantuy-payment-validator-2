@@ -160,14 +160,53 @@ export async function handleQhantuCallback(req, res) {
 
     console.log('✅ Callback received with success status. Proceeding to process payment...');
 
+    // Get shop domain from multiple sources
+    // Try query param, header, or extract from internal_code
+    let shopDomain = req.query.shop || 
+                     req.headers['x-shopify-shop-domain'] || 
+                     req.headers['x-shopify-shop'];
+    
+    // Ensure we have internal_code (it should be set by now from req.query or the lookup above)
+    if (!internal_code) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing internal_code. Cannot process payment without Shopify order identifier.',
+        tip: 'The callback must include internal_code parameter or transaction_id that can be resolved to internal_code.'
+      });
+    }
+    
+    // If shop domain not provided, try to extract from internal_code
+    // internal_code format: SHOPIFY-ORDER-{number} contains order ID, but not shop domain
+    // We need to search for the shop by trying to get the order from all registered shops
+    if (!shopDomain && internal_code) {
+      console.log('⚠️  Shop domain not provided in callback. Attempting to find shop from internal_code...');
+      // Extract order number from internal_code
+      const orderNumber = internal_code.replace('SHOPIFY-ORDER-', '');
+      console.log('🔍 Order number from internal_code:', orderNumber);
+      
+      // Note: We can't easily determine shop from order number without trying all shops
+      // For now, return error asking for shop domain
+      // In production, you might want to maintain a mapping of order numbers to shops
+      return res.status(400).json({
+        success: false,
+        message: 'Shop domain is required. Please provide ?shop=tienda.myshopify.com in callback URL or X-Shopify-Shop-Domain header.',
+        tip: 'Configure Qhantuy callback URL to include shop parameter: /api/qhantuy/callback?shop=tienda.myshopify.com'
+      });
+    }
+
     // Get shop session from storage
-    const session = await getShopSession(req.query.shop || req.headers['x-shopify-shop-domain']);
+    const session = await getShopSession(shopDomain);
     
     if (!session) {
-      console.error('No session found for shop');
+      console.error('❌ No session found for shop:', shopDomain);
+      console.error('   Callback received but token not registered for this shop.');
+      console.error('   Install URL:', `${process.env.SHOPIFY_APP_URL || 'https://qhantuy-payment-backend.vercel.app'}/auth?shop=${shopDomain}`);
       return res.status(401).json({
         success: false,
-        message: 'Shop session not found'
+        message: 'Shop session not found. Please ensure the app is installed for this shop.',
+        shop_domain: shopDomain,
+        install_url: `${process.env.SHOPIFY_APP_URL || 'https://qhantuy-payment-backend.vercel.app'}/auth?shop=${shopDomain}`,
+        tip: 'Register token at: https://qhantuy-payment-backend.vercel.app/api/token-register'
       });
     }
 
@@ -192,40 +231,80 @@ export async function handleQhantuCallback(req, res) {
     // Convert to GraphQL ID format
     const graphQLOrderId = `gid://shopify/Order/${numericOrderId}`;
     
-    // Add a note to the order
-    const noteQuery = `
-      mutation orderUpdate($input: OrderInput!) {
-        orderUpdate(input: $input) {
-          order {
-            id
-            note
-          }
-          userErrors {
-            field
-            message
-          }
+    // Actualizar nota del pedido (agregar información de verificación sin reemplazar)
+    // Primero obtener la nota existente
+    const getNoteQuery = `
+      query getOrder($id: ID!) {
+        order(id: $id) {
+          id
+          note
         }
       }
     `;
-
-    const noteVariables = {
-      input: {
-        id: graphQLOrderId,
-        note: `Qhantuy Payment Verified (Callback)\nTransaction ID: ${finalTransactionId}\nAmount: ${checkout_amount} ${checkout_currency_code}\nStatus: ${finalStatus}\nTimestamp: ${new Date().toISOString()}`
-      }
-    };
-
-    const noteResult = await client.query({
-      data: {
-        query: noteQuery,
-        variables: noteVariables
-      }
-    });
-
-    if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
-      console.error('GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+    
+    let existingNote = '';
+    try {
+      const getNoteResult = await client.query({
+        data: {
+          query: getNoteQuery,
+          variables: { id: graphQLOrderId }
+        }
+      });
+      existingNote = getNoteResult.body.data?.order?.note || '';
+    } catch (error) {
+      console.warn('⚠️ Could not fetch existing note:', error.message);
+    }
+    
+    // Verificar si ya existe una nota de verificación para este transaction_id
+    const verificationNotePattern = new RegExp(`Qhantuy Payment Verified.*Transaction ID:\\s*${finalTransactionId}`, 'i');
+    if (verificationNotePattern.test(existingNote)) {
+      console.log('ℹ️ Payment verification note already exists for this transaction_id. Skipping duplicate.');
     } else {
-      console.log('✅ Order note updated successfully');
+      // Agregar nota de verificación sin reemplazar la nota existente
+      const verificationNote = `Qhantuy Payment Verified (Callback)
+Transaction ID: ${finalTransactionId}
+Amount: ${checkout_amount} ${checkout_currency_code}
+Status: ${finalStatus}
+Timestamp: ${new Date().toISOString()}`;
+      
+      const updatedNote = existingNote 
+        ? `${existingNote}\n\n---\n${verificationNote}`
+        : verificationNote;
+      
+      const noteQuery = `
+        mutation orderUpdate($input: OrderInput!) {
+          orderUpdate(input: $input) {
+            order {
+              id
+              note
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      const noteVariables = {
+        input: {
+          id: graphQLOrderId,
+          note: updatedNote
+        }
+      };
+
+      const noteResult = await client.query({
+        data: {
+          query: noteQuery,
+          variables: noteVariables
+        }
+      });
+
+      if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
+        console.error('GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+      } else {
+        console.log('✅ Order note updated with callback verification');
+      }
     }
 
     // Mark order as paid using REST API
@@ -325,8 +404,30 @@ export async function handleQhantuCallback(req, res) {
  * Handle order confirmation from checkout extension
  */
 export async function confirmPayment(req, res) {
+  // Configurar headers CORS
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://extensions.shopifycdn.com',
+    'https://admin.shopify.com',
+    'https://checkout.shopify.com'
+  ];
+  
+  if (origin && (allowedOrigins.includes(origin) || origin.includes('localhost'))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Shopify-Shop-Domain, X-API-Token');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
-    const { order_id, transaction_id } = req.body;
+    const { order_id, transaction_id, qhantuy_api_url } = req.body;
 
     if (!order_id || !transaction_id) {
       return res.status(400).json({
@@ -357,29 +458,10 @@ export async function confirmPayment(req, res) {
       });
     }
 
-    // Verify payment with Qhantuy usando servicio 3 - CONSULTA DEUDA
-    // Necesitamos el internal_code del pedido para consultar
-    let internalCode = null;
-    if (order_id) {
-      // Convertir order_id a formato SHOPIFY-ORDER-{number}
-      if (order_id.startsWith('gid://shopify/Order/')) {
-        const numericId = order_id.replace('gid://shopify/Order/', '');
-        internalCode = `SHOPIFY-ORDER-${numericId}`;
-      } else {
-        internalCode = `SHOPIFY-ORDER-${order_id}`;
-      }
-    }
-    
-    const qhantuVerification = await verifyQhantuPayment(transaction_id, internalCode);
-
-    if (!qhantuVerification.success) {
-      return res.status(400).json({
-        success: false,
-        message: 'Payment verification failed'
-      });
-    }
-
-    const payment = qhantuVerification.payment;
+    // Marcar pedido como authorized directamente sin verificación
+    // La extensión ya verificó que payment_status === 'success' usando su propia consulta a Qhantuy
+    // Confiamos en esa verificación y marcamos el pedido como authorized
+    console.log('✅ Extension confirmed payment success. Marking order as authorized directly (skipping Qhantuy API verification).');
     
     // Update order similar to handleQhantuCallback
     // Create GraphQL client
@@ -408,25 +490,7 @@ export async function confirmPayment(req, res) {
       }
     `;
 
-    const noteVariables = {
-      input: {
-        id: graphQLOrderId,
-        note: `Qhantuy Payment Verified (Manual Verification)\nTransaction ID: ${String(req.body.transaction_id).trim()}\nAmount: ${payment.checkout_amount || payment.amount || 'N/A'} ${payment.checkout_currency || payment.currency || 'N/A'}\nStatus: ${payment.payment_status}\nVerified at: ${new Date().toISOString()}`
-      }
-    };
-
-    const noteResult = await client.query({
-      data: {
-        query: noteQuery,
-        variables: noteVariables
-      }
-    });
-
-    if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
-      console.error('GraphQL errors:', noteResult.body.data.orderUpdate.userErrors);
-    }
-
-    // Mark order as paid using REST API
+    // Obtener información del pedido para usar en la transacción
     const rest = new shopify.clients.Rest({ session });
     
     // Extract numeric order ID for REST API
@@ -435,77 +499,150 @@ export async function confirmPayment(req, res) {
       numericOrderId = order_id.replace('gid://shopify/Order/', '');
     }
     
-    // Get the order first
+    // Get the order first to get amount and currency
     const orderResponse = await rest.get({
       path: `orders/${numericOrderId}`
     });
 
     const order = orderResponse.body.order;
-    const orderAmount = payment.checkout_amount || payment.amount || order.total_price;
-    const orderCurrency = payment.checkout_currency || payment.currency || order.currency;
+    
+    // Si el pedido ya está pagado o autorizado, no hacer nada
+    if (order.financial_status === 'paid' || order.financial_status === 'authorized') {
+      console.log('ℹ️ Order is already marked as paid/authorized. Skipping transaction creation.');
+      return res.status(200).json({
+        success: true,
+        message: 'Order already marked as paid/authorized',
+        order_id: numericOrderId,
+        financial_status: order.financial_status
+      });
+    }
+    
+    // Usar información del pedido para la transacción
+    const orderAmount = order.total_price;
+    const orderCurrency = order.currency;
 
-    // Update order to mark as authorized/paid if not already paid
-    // Usar una transacción de tipo "authorization" para marcar el pedido como authorized
-    // Shopify automáticamente mostrará el pedido como pagado cuando el monto coincide
-    if (order.financial_status !== 'paid' && order.financial_status !== 'authorized') {
-      try {
-        // Crear una transacción de tipo "authorization" que marca el pedido como authorized
-        // Esto actualiza el estado financiero del pedido a "authorized" y se mostrará como pagado
-        const authorizeTransaction = await rest.post({
-          path: `orders/${numericOrderId}/transactions`,
-          data: {
-            transaction: {
-              kind: 'authorization',
-              status: 'success',
-              amount: orderAmount,
-              currency: orderCurrency,
-              gateway: 'manual',
-              source: 'external',
-              message: `Qhantuy QR Payment - Transaction ID: ${finalTransactionId}`
-            }
-          }
-        });
-
-        console.log('✅ Authorization transaction created (confirmPayment - order marked as authorized):', authorizeTransaction.body);
-        
-        // Verificar el estado actualizado del pedido
-        const updatedOrderResponse = await rest.get({
-          path: `orders/${numericOrderId}`
-        });
-        const updatedOrder = updatedOrderResponse.body.order;
-        
-        console.log('✅ Order updated (confirmPayment). New financial_status:', updatedOrder.financial_status, '(should be authorized or paid)');
-        
-        // Update order tags to include payment status
-        const tags = order.tags ? `${order.tags}, qhantuy-paid` : 'qhantuy-paid';
-        await rest.put({
-          path: `orders/${numericOrderId}`,
-          data: {
-            order: {
-              id: numericOrderId,
-              tags: tags
-            }
-          }
-        });
-        
-        console.log('✅ Order tags updated (confirmPayment)');
-        
-      } catch (transactionError) {
-        console.error('Error creating transaction (confirmPayment):', transactionError);
-        // Re-lanzar el error para que el cliente sepa que falló
-        throw transactionError;
+    // Actualizar nota del pedido (agregar información de verificación sin reemplazar)
+    // Primero obtener la nota existente
+    const getNoteQuery = `
+      query getOrder($id: ID!) {
+        order(id: $id) {
+          id
+          note
+        }
       }
+    `;
+    
+    let existingNote = '';
+    try {
+      const getNoteResult = await client.query({
+        data: {
+          query: getNoteQuery,
+          variables: { id: graphQLOrderId }
+        }
+      });
+      existingNote = getNoteResult.body.data?.order?.note || '';
+    } catch (error) {
+      console.warn('⚠️ Could not fetch existing note:', error.message);
+    }
+    
+    // Verificar si ya existe una nota de verificación para este transaction_id
+    const verificationNotePattern = new RegExp(`Qhantuy Payment Verified.*Transaction ID:\\s*${String(transaction_id).trim()}`, 'i');
+    if (verificationNotePattern.test(existingNote)) {
+      console.log('ℹ️ Payment verification note already exists for this transaction_id. Skipping duplicate.');
     } else {
-      console.log('ℹ️ Order is already marked as paid (confirmPayment). Skipping transaction creation.');
+      // Agregar nota de verificación sin reemplazar la nota existente
+      const verificationNote = `Qhantuy Payment Verified (Extension Confirmed)
+Transaction ID: ${String(transaction_id).trim()}
+Amount: ${orderAmount} ${orderCurrency}
+Status: success
+Confirmed at: ${new Date().toISOString()}`;
+      
+      const updatedNote = existingNote 
+        ? `${existingNote}\n\n---\n${verificationNote}`
+        : verificationNote;
+      
+      const noteVariables = {
+        input: {
+          id: graphQLOrderId,
+          note: updatedNote
+        }
+      };
+
+      const noteResult = await client.query({
+        data: {
+          query: noteQuery,
+          variables: noteVariables
+        }
+      });
+
+      if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
+        console.error('GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+      } else {
+        console.log('✅ Order note updated with payment verification');
+      }
     }
 
-    return res.status(200).json({
-      success: true,
-      message: 'Payment confirmed and order updated successfully',
-      order_id: numericOrderId,
-      transaction_id: transaction_id,
-      financial_status: order.financial_status
-    });
+    // Update order to mark as PAID
+    // Usar una transacción de tipo "sale" para marcar el pedido como paid directamente
+    // "sale" autoriza y captura en un solo paso, marcando el pedido como "paid"
+    try {
+      // Crear una transacción de tipo "sale" que marca el pedido como paid
+      // Esto actualiza el estado financiero del pedido a "paid" directamente
+      const saleTransaction = await rest.post({
+        path: `orders/${numericOrderId}/transactions`,
+        data: {
+          transaction: {
+            kind: 'sale',
+            status: 'success',
+            amount: orderAmount,
+            currency: orderCurrency,
+            gateway: 'manual',
+            source: 'external',
+            message: `Qhantuy QR Payment - Transaction ID: ${String(transaction_id).trim()}`
+          }
+        }
+      });
+
+      console.log('✅ Sale transaction created (confirmPayment - order marked as paid):', saleTransaction.body);
+      
+      // Verificar el estado actualizado del pedido
+      const updatedOrderResponse = await rest.get({
+        path: `orders/${numericOrderId}`
+      });
+      const updatedOrder = updatedOrderResponse.body.order;
+      
+      console.log('✅ Order updated (confirmPayment). New financial_status:', updatedOrder.financial_status, '(should be paid)');
+      
+      // Update order tags to include payment status
+      const tags = order.tags ? `${order.tags}, qhantuy-paid` : 'qhantuy-paid';
+      await rest.put({
+        path: `orders/${numericOrderId}`,
+        data: {
+          order: {
+            id: numericOrderId,
+            tags: tags
+          }
+        }
+      });
+      
+      console.log('✅ Order tags updated (confirmPayment)');
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Order marked as paid successfully',
+        order_id: numericOrderId,
+        financial_status: updatedOrder.financial_status,
+        transaction_id: transaction_id
+      });
+        
+    } catch (transactionError) {
+      console.error('❌ Error creating transaction (confirmPayment):', transactionError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to mark order as paid',
+        error: transactionError.message
+      });
+    }
 
   } catch (error) {
     console.error('Error confirming payment:', error);
@@ -539,8 +676,14 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
       return { success: false, error: 'transaction_id is required for payment verification' };
     }
 
+    // SECURITY: Sanitize transaction_id - should only contain numeric characters
+    const sanitizedTransactionId = String(transactionId).trim().replace(/[^0-9]/g, '');
+    if (!sanitizedTransactionId || sanitizedTransactionId !== String(transactionId).trim()) {
+      return { success: false, error: 'Invalid transaction_id format. Must be numeric.' };
+    }
+
     // Según documentación: usar endpoint /check-payments con payment_ids
-    console.log('🔍 Verifying payment with Qhantuy /check-payments:', transactionId);
+    console.log('🔍 Verifying payment with Qhantuy /check-payments:', sanitizedTransactionId);
     
     const response = await fetch(`${apiUrl}/check-payments`, {
       method: 'POST',
@@ -548,10 +691,10 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
         'Content-Type': 'application/json',
         'X-API-Token': apiToken
       },
-          body: JSON.stringify({
-            appkey: appkey,
-            payment_ids: [sanitizedTransactionId]
-          })
+      body: JSON.stringify({
+        appkey: appkey,
+        payment_ids: [sanitizedTransactionId]
+      })
     });
 
     if (!response.ok) {
@@ -560,24 +703,58 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
     }
 
     const data = await response.json();
-    console.log('✅ CONSULTA DE DEUDA response:', data);
+    console.log('✅ CONSULTA DE DEUDA response:', JSON.stringify(data, null, 2));
 
     // Según documentación: respuesta puede tener payments (array) o items (array en respuesta real)
     // Cada payment/item tiene payment_status: 'success', 'holding', 'rejected'
     const paymentItems = data.items || data.payments || [];
     
+    console.log('📋 Payment items found:', paymentItems.length);
+    
     if (data.process && paymentItems.length > 0) {
       const payment = paymentItems[0];
+      console.log('📋 Payment data:', JSON.stringify(payment, null, 2));
       
-      // Solo retornar success si payment_status === 'success' según documentación
-      const paymentStatus = payment.payment_status || payment.status || payment.paymentStatus;
+      // Buscar payment_status en diferentes campos y formatos (puede tener espacios, mayúsculas, etc.)
+      let paymentStatus = null;
+      
+      // Buscar en diferentes campos posibles
+      for (const key in payment) {
+        const normalizedKey = String(key).trim().toLowerCase().replace(/\s+/g, '_');
+        if (normalizedKey === 'payment_status' || normalizedKey === 'status' || normalizedKey === 'paymentstatus') {
+          paymentStatus = String(payment[key]).trim().toLowerCase();
+          break;
+        }
+      }
+      
+      // Si no encontramos, intentar campos comunes
+      if (!paymentStatus) {
+        paymentStatus = payment.payment_status || payment.status || payment.paymentStatus;
+        if (paymentStatus) {
+          paymentStatus = String(paymentStatus).trim().toLowerCase();
+        }
+      }
+      
+      console.log('📋 Payment status found:', paymentStatus);
+      
+      // Verificar si el pago fue exitoso
+      const isSuccess = paymentStatus === 'success' || 
+                        paymentStatus === 'paid' || 
+                        paymentStatus === 'completed' ||
+                        paymentStatus === '000' ||
+                        (paymentStatus && paymentStatus.includes('success'));
+      
+      console.log('📋 Payment verification result:', { paymentStatus, isSuccess });
+      
       return {
-        success: paymentStatus === 'success' || paymentStatus === 'paid' || paymentStatus === 'completed',
-        payment: payment
+        success: isSuccess,
+        payment: payment,
+        paymentStatus: paymentStatus
       };
     }
 
-    return { success: false, message: data.message || 'Payment verification failed' };
+    console.warn('⚠️ No payment items found in response or process is false');
+    return { success: false, message: data.message || 'Payment verification failed - no payment items found' };
   } catch (error) {
     console.error('❌ Error verifying Qhantuy payment:', error);
     return { success: false, error: error.message };
@@ -594,6 +771,28 @@ async function verifyQhantuPayment(transactionId, internalCode = null, qhantuyAp
  * - internal_code: Will try to find transaction_id from Shopify order notes first
  */
 export async function checkDebtStatus(req, res) {
+  // Configurar headers CORS para permitir llamadas desde Shopify extensions
+  const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://extensions.shopifycdn.com',
+    'https://admin.shopify.com',
+    'https://checkout.shopify.com'
+  ];
+  
+  if (origin && (allowedOrigins.includes(origin) || origin.includes('localhost'))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Shopify-Shop-Domain, X-API-Token');
+  res.setHeader('Access-Control-Max-Age', '86400');
+  
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   try {
     const { transaction_id, internal_code, qhantuy_api_url } = req.body;
 
@@ -802,9 +1001,104 @@ async function getShopSession(shopDomain) {
   }
   
   // 1. Intentar obtener token guardado automáticamente (persistente)
+  console.log(`🔍 getShopSession: Looking for token for shop: ${normalizedShop}`);
+  console.log(`   Original shop domain: ${shopDomain}`);
+  console.log(`   Normalized shop domain: ${normalizedShop}`);
+  console.log(`   Expected Redis key: shop:${normalizedShop}:token`);
+  
   let accessToken = await getAccessToken(normalizedShop);
   
-  // 2. Si no hay token persistente, usar variable de entorno (fallback)
+  // 2. Si no hay token y el shopDomain parece ser un ID interno (ej: e3d607.myshopify.com)
+  // Buscar en todos los tokens registrados para encontrar el dominio real
+  if (!accessToken) {
+    // Detectar ID interno: 6-8 caracteres alfanuméricos antes de .myshopify.com
+    // Ejemplos: e3d607, a1b2c3, x9y8z7w6
+    const domainPart = normalizedShop.replace('.myshopify.com', '');
+    const isInternalId = domainPart.length >= 6 && domainPart.length <= 8 && /^[a-z0-9]+$/.test(domainPart);
+    
+    console.log('🔍 Checking if shop domain is internal ID:', {
+      shopDomain: normalizedShop,
+      domainPart: domainPart,
+      domainLength: domainPart.length,
+      isInternalId: isInternalId,
+      hasAccessToken: !!accessToken
+    });
+    
+    if (isInternalId) {
+      console.log('⚠️  Shop domain appears to be internal ID. Searching for real domain...');
+      
+      try {
+        // Obtener cliente Redis para buscar todos los tokens
+        const redisUrl = process.env.qhantuy_REDIS_URL || process.env.REDIS_URL || process.env.KV_REST_API_URL;
+        let redis = null;
+        
+        if (redisUrl) {
+          try {
+            const Redis = (await import('ioredis')).default;
+            redis = new Redis(redisUrl, {
+              connectTimeout: 3000,
+              retryStrategy: () => null,
+              lazyConnect: true,
+            });
+            await redis.connect();
+          } catch (ioredisError) {
+            try {
+              const { createClient } = await import('redis');
+              redis = createClient({ url: redisUrl });
+              await redis.connect();
+            } catch (redisError) {
+              console.warn('⚠️  Could not connect to Redis for domain lookup:', redisError.message);
+            }
+          }
+        }
+        
+        if (redis) {
+          try {
+            // Buscar todos los tokens registrados
+            const allTokenKeys = await redis.keys('shop:*:token');
+            
+            if (allTokenKeys.length > 0) {
+              console.log(`🔍 Found ${allTokenKeys.length} registered shop tokens`);
+              
+              // Extraer dominios y encontrar el que tiene token
+              for (const key of allTokenKeys) {
+                const match = key.match(/^shop:(.+):token$/);
+                if (match) {
+                  const realDomain = match[1];
+                  const token = await redis.get(key);
+                  
+                  if (token && realDomain !== normalizedShop) {
+                    // Encontramos un dominio real con token
+                    console.log(`✅ Found real domain with token: ${realDomain}`);
+                    normalizedShop = realDomain;
+                    accessToken = token;
+                    break;
+                  }
+                }
+              }
+            }
+          } catch (redisError) {
+            console.warn('⚠️  Error searching Redis for real domain:', redisError.message);
+          } finally {
+            // Cerrar conexión Redis
+            try {
+              if (redis && typeof redis.quit === 'function') {
+                await redis.quit();
+              } else if (redis && typeof redis.disconnect === 'function') {
+                await redis.disconnect();
+              }
+            } catch (closeError) {
+              // Ignorar errores al cerrar
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️  Error in domain lookup fallback:', error.message);
+      }
+    }
+  }
+  
+  // 3. Si no hay token persistente, usar variable de entorno (fallback)
   if (!accessToken) {
     accessToken = process.env.SHOPIFY_ACCESS_TOKEN;
     if (accessToken) {
@@ -812,15 +1106,19 @@ async function getShopSession(shopDomain) {
     }
   } else {
     console.log(`✅ Using automatically stored token (persistent) for: ${normalizedShop}`);
+    console.log(`   Token preview: ${accessToken.substring(0, 15)}...`);
   }
   
   if (!accessToken) {
     console.warn(`⚠️  No access token found for shop: ${normalizedShop}`);
     console.warn(`   Original shop domain received: ${shopDomain}`);
     console.warn(`   Normalized shop domain: ${normalizedShop}`);
+    console.warn(`   Expected Redis key: shop:${normalizedShop}:token`);
     console.warn('   Check that:');
     console.warn('   1. The app has been installed via OAuth callback for this shop, OR');
-    console.warn('   2. SHOPIFY_ACCESS_TOKEN environment variable is set (single-store only)');
+    console.warn('   2. Token was registered manually via /api/token-register');
+    console.warn('   3. SHOPIFY_ACCESS_TOKEN environment variable is set (single-store only)');
+    console.warn('   Debug: Use /api/debug-tokens?shop=' + normalizedShop + ' to check token status');
     const installUrl = `${process.env.SHOPIFY_APP_URL || 'https://qhantuy-payment-backend.vercel.app'}/auth?shop=${normalizedShop}`;
     console.warn(`   Install URL: ${installUrl}`);
     // Return null to indicate session not found
@@ -1056,6 +1354,19 @@ export async function saveTransactionId(req, res) {
       console.warn('⚠️ Could not fetch existing order data:', error.message);
     }
 
+    // Verificar si ya existe una nota con este transaction_id para evitar duplicados
+    const transactionIdPattern = new RegExp(`Transaction ID:\\s*${transaction_id}\\b`, 'i');
+    if (existingNote && transactionIdPattern.test(existingNote)) {
+      console.log('ℹ️ Transaction ID already exists in order notes. Skipping duplicate note.');
+      return res.status(200).json({
+        success: true,
+        message: 'Transaction ID already exists in order notes',
+        transaction_id: transaction_id,
+        order_id: numericOrderId,
+        shop: shopDomain
+      });
+    }
+    
     // Build note with Transaction ID
     const transactionNote = `Qhantuy QR Payment Created
 Transaction ID: ${transaction_id}

@@ -53,7 +53,13 @@ export default async function handler(req, res) {
           });
         }
 
+        // Normalizar shop domain (igual que en auth-callback.js y storage.js)
         let normalizedShop = String(shop).trim().toLowerCase();
+        normalizedShop = normalizedShop
+          .replace(/^https?:\/\//, '') // Remove protocol
+          .replace(/\/$/, '') // Remove trailing slash
+          .replace(/^www\./, ''); // Remove www prefix if present
+        
         if (!normalizedShop.includes('.myshopify.com')) {
           if (normalizedShop.includes('.')) {
             return res.status(400).json({
@@ -110,8 +116,13 @@ export default async function handler(req, res) {
         `);
       }
 
-      // Normalizar shop domain
+      // Normalizar shop domain (igual que en auth-callback.js y storage.js)
       let normalizedShop = String(shop).trim().toLowerCase();
+      normalizedShop = normalizedShop
+        .replace(/^https?:\/\//, '') // Remove protocol
+        .replace(/\/$/, '') // Remove trailing slash
+        .replace(/^www\./, ''); // Remove www prefix if present
+      
       if (!normalizedShop.includes('.myshopify.com')) {
         normalizedShop = `${normalizedShop}.myshopify.com`;
       }

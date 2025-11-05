@@ -103,6 +103,20 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
  * Formatear settings para uso en componentes
  */
 export function formatSettings(mergedSettings) {
+  // Normalizar backendApiUrl para evitar URLs duplicadas
+  let backendApiUrl = mergedSettings.backend_api_url || 'https://qhantuy-payment-backend.vercel.app';
+  
+  // Limpiar backendApiUrl: remover cualquier path que no sea la base URL
+  if (backendApiUrl) {
+    try {
+      const urlObj = new URL(backendApiUrl);
+      backendApiUrl = `${urlObj.protocol}//${urlObj.host}`;
+      console.log('📋 Normalized backendApiUrl in formatSettings:', backendApiUrl);
+    } catch (error) {
+      console.warn('⚠️ Could not parse backendApiUrl in formatSettings, using as-is:', backendApiUrl);
+    }
+  }
+  
   return {
     apiUrl: mergedSettings.qhantuy_api_url || 'https://checkout.qhantuy.com/external-api',
     apiToken: mergedSettings.qhantuy_api_token || '',
@@ -110,7 +124,7 @@ export function formatSettings(mergedSettings) {
     paymentGatewayName: mergedSettings.payment_gateway_name || 'Pago QR Manual',
     checkInterval: (mergedSettings.check_interval || 10) * 1000, // Convertir a milisegundos (default: 10 segundos para evitar 429)
     maxCheckDuration: (mergedSettings.max_check_duration || 30) * 60 * 1000, // Convertir a milisegundos
-    backendApiUrl: mergedSettings.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
+    backendApiUrl: backendApiUrl,
     source: mergedSettings.source || 'default',
     hasConfiguredSettings: !!(mergedSettings.qhantuy_api_token && mergedSettings.qhantuy_appkey)
   };
