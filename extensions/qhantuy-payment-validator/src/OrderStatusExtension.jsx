@@ -206,7 +206,7 @@ function QhantuPaymentValidatorOrderStatus() {
       if (cost.totalPrice) {
         setTotalAmount(cost.totalPrice);
       } else if (cost.amount) {
-        setTotalAmount({ amount: cost.amount, currencyCode: cost.currencyCode || 'BOB' });
+        setTotalAmount({ amount: cost.amount, currencyCode: cost.currencyCode || 'USD' });
       }
     }
   }, [cost]);
@@ -448,9 +448,13 @@ function QhantuPaymentValidatorOrderStatus() {
     const { number, id } = getOrderIdentifiers();
     
     // Obtener currency code de diferentes formas
+    // IMPORTANTE: Usar la moneda del pedido (USD), no BOB
+    // Priorizar: totalAmount > cost.totalAmount > order.currency > USD (fallback seguro)
     const currencyCode = totalAmount?.currencyCode || 
                         cost?.totalAmount?.currencyCode ||
-                        'BOB'; // Default a BOB si no está disponible
+                        order?.currencyCode ||
+                        order?.currency ||
+                        'USD'; // Default a USD (moneda estándar de Shopify) si no está disponible
     
     // Obtener el monto total de diferentes formas
     // totalAmount puede ser un objeto {amount: string, currencyCode: string} o un signal
@@ -790,6 +794,16 @@ function QhantuPaymentValidatorOrderStatus() {
         return_url: `https://${shop.myshopifyDomain}/tools/order_status/${id}`,
         items: items
       };
+      
+      // 🔍 LOGGING: Confirmar moneda que se envía a Qhantuy
+      console.log('🔍 MONEDA ENVIADA A QHANTUY (OrderStatus):');
+      console.log('   currency_code:', currencyCode);
+      console.log('   Fuentes consultadas:');
+      console.log('     - totalAmount?.currencyCode:', totalAmount?.currencyCode);
+      console.log('     - cost?.totalAmount?.currencyCode:', cost?.totalAmount?.currencyCode);
+      console.log('     - order?.currencyCode:', order?.currencyCode);
+      console.log('     - order?.currency:', order?.currency);
+      console.log('   ✅ Moneda final enviada:', currencyCode);
       
       console.log('Request body validation (OrderStatus):', {
         hasItems: requestBody.items.length > 0,

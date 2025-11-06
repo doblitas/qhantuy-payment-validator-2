@@ -30,6 +30,15 @@ export async function handleQhantuCallback(req, res) {
       status
     } = req.query;
 
+    // 🔍 LOGGING: Confirmar qué está enviando Qhantuy
+    console.log('🔍 QHANTUY CALLBACK - Valores recibidos de Qhantuy:');
+    console.log('   checkout_currency_code:', checkout_currency_code);
+    console.log('   checkout_amount:', checkout_amount);
+    console.log('   transaction_id:', transaction_id);
+    console.log('   internal_code:', internal_code);
+    console.log('   status:', status);
+    console.log('   Raw query params:', JSON.stringify(req.query, null, 2));
+
     // SECURITY: Validate and sanitize inputs
     // Validate required parameters
     // Para test-callback, internal_code puede venir después si tenemos transaction_id
@@ -246,8 +255,22 @@ export async function handleQhantuCallback(req, res) {
       orderCurrency = order.currency || checkout_currency_code;
       orderAmount = order.total_price || checkout_amount;
       
-      console.log('📊 Order currency from Shopify:', orderCurrency, '(Qhantuy sent:', checkout_currency_code + ')');
-      console.log('💰 Order amount from Shopify:', orderAmount, '(Qhantuy sent:', checkout_amount + ')');
+      console.log('📊 COMPARACIÓN DE MONEDA Y MONTO:');
+      console.log('   Qhantuy envió:');
+      console.log('     - Currency:', checkout_currency_code);
+      console.log('     - Amount:', checkout_amount);
+      console.log('   Shopify pedido:');
+      console.log('     - Currency:', order.currency);
+      console.log('     - Amount:', order.total_price);
+      console.log('   ✅ USANDO (Shopify):');
+      console.log('     - Currency:', orderCurrency);
+      console.log('     - Amount:', orderAmount);
+      
+      // Confirmar si hay diferencia
+      if (checkout_currency_code !== orderCurrency) {
+        console.log('⚠️  DIFERENCIA DETECTADA: Qhantuy envió', checkout_currency_code, 'pero el pedido está en', orderCurrency);
+        console.log('   ✅ Se usará la moneda del pedido:', orderCurrency);
+      }
     } catch (orderError) {
       console.warn('⚠️ Could not fetch order to get currency. Using Qhantuy values:', orderError.message);
     }
