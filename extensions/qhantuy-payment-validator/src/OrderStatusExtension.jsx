@@ -2275,9 +2275,22 @@ function QhantuPaymentValidatorOrderStatus() {
         
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas
-        const isPaid = paymentStatus === 'success' || paymentStatus === 'paid' || paymentStatus === 'completed';
+        // IMPORTANTE: paymentStatus aquí es la variable local del objeto payment, no el estado de React
+        const isPaid = paymentStatus === 'success' || 
+                      paymentStatus === 'paid' || 
+                      paymentStatus === 'completed' ||
+                      String(paymentStatus).toLowerCase() === 'success' ||
+                      String(paymentStatus).toLowerCase() === 'paid' ||
+                      String(paymentStatus).toLowerCase() === 'completed';
+        
+        console.log('🔍 Payment status check (OrderStatus):', {
+          paymentStatusFromQhantuy: paymentStatus,
+          isPaid,
+          willSetSuccess: isPaid
+        });
         
         if (isPaid) {
+          console.log('✅ Payment confirmed! Setting paymentStatus to success (OrderStatus)');
           setPaymentStatus('success');
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());

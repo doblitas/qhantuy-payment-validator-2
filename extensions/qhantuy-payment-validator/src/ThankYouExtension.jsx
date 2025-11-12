@@ -1974,21 +1974,37 @@ function QhantuPaymentValidatorThankYou() {
         
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas
-        const isPaid = paymentStatus === 'success' || paymentStatus === 'paid' || paymentStatus === 'completed';
+        // IMPORTANTE: paymentStatus aquí es la variable local del objeto payment, no el estado de React
+        const isPaid = paymentStatus === 'success' || 
+                      paymentStatus === 'paid' || 
+                      paymentStatus === 'completed' ||
+                      String(paymentStatus).toLowerCase() === 'success' ||
+                      String(paymentStatus).toLowerCase() === 'paid' ||
+                      String(paymentStatus).toLowerCase() === 'completed';
         
-        console.log('🔍 Payment status verification:', {
-          paymentStatus,
+        console.log('🔍 Payment status verification (ThankYou):', {
+          paymentStatusFromQhantuy: paymentStatus,
           isPaid,
+          willSetSuccess: isPaid,
           transaction_id: payment.id || payment.transaction_id || cleanTxId,
           rawPayment: payment
         });
         
         if (isPaid) {
-          console.log('✅ Payment confirmed! Status:', paymentStatus);
+          console.log('✅ Payment confirmed! Setting paymentStatus to success (ThankYou)');
+          console.log('   Current paymentStatus state before update:', paymentStatus);
+          
+          // Forzar actualización del estado
           setPaymentStatus('success');
           setErrorMessage(''); // Limpiar cualquier error previo
+          
+          // Esperar un tick para asegurar que el estado se actualice
+          await new Promise(resolve => setTimeout(resolve, 0));
+          
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());
+          
+          console.log('✅ Payment status updated to success, storage saved (ThankYou)');
           
           // Actualizar el pedido en Shopify
           try {
