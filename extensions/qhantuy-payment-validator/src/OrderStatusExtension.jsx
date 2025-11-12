@@ -2291,9 +2291,18 @@ function QhantuPaymentValidatorOrderStatus() {
         
         if (isPaid) {
           console.log('✅ Payment confirmed! Setting paymentStatus to success (OrderStatus)');
+          console.log('   Current paymentStatus state before update:', paymentStatus);
+          
+          // Forzar actualización del estado
           setPaymentStatus('success');
+          
+          // Esperar un tick para asegurar que el estado se actualice
+          await new Promise(resolve => setTimeout(resolve, 0));
+          
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());
+          
+          console.log('✅ Payment status updated to success, storage saved (OrderStatus)');
           
           // Actualizar el pedido en Shopify
           try {
