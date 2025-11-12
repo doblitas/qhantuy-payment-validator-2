@@ -2235,7 +2235,8 @@ function QhantuPaymentValidatorOrderStatus() {
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // La respuesta real puede tener diferentes nombres de campos, incluso con espacios
         // Buscar en todas las keys del objeto (algunas APIs devuelven campos con espacios al final)
-        const paymentStatus = payment.payment_status || 
+        // IMPORTANTE: Usar nombre diferente para evitar confusión con el estado de React
+        const qhantuyPaymentStatus = payment.payment_status || 
                              payment.status || 
                              payment.paymentStatus ||
                              payment.payment_state ||
@@ -2258,8 +2259,9 @@ function QhantuPaymentValidatorOrderStatus() {
         
         console.log('📊 Payment details from CONSULTA DE DEUDA (OrderStatus):', {
           transaction_id: payment.id || payment.transaction_id || cleanTxId,
-          payment_status: paymentStatus,
-          payment_status_source: paymentStatus ? 'found' : 'NOT FOUND - checking all fields',
+          qhantuyPaymentStatus: qhantuyPaymentStatus,
+          currentReactPaymentStatus: paymentStatus, // Estado actual de React
+          payment_status_source: qhantuyPaymentStatus ? 'found' : 'NOT FOUND - checking all fields',
           payment_keys: Object.keys(payment),
           amount: payment.checkout_amount || payment.amount,
           currency: payment.checkout_currency || payment.currency,
@@ -2267,7 +2269,7 @@ function QhantuPaymentValidatorOrderStatus() {
         });
         
         // Si no encontramos payment_status, loguear advertencia
-        if (!paymentStatus) {
+        if (!qhantuyPaymentStatus) {
           console.warn('⚠️ WARNING: payment_status not found in Qhantuy response (OrderStatus)');
           console.warn('   Available payment fields:', Object.keys(payment));
           console.warn('   Payment object:', JSON.stringify(payment, null, 2));
@@ -2275,34 +2277,45 @@ function QhantuPaymentValidatorOrderStatus() {
         
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas
-        // IMPORTANTE: paymentStatus aquí es la variable local del objeto payment, no el estado de React
-        const isPaid = paymentStatus === 'success' || 
-                      paymentStatus === 'paid' || 
-                      paymentStatus === 'completed' ||
-                      String(paymentStatus).toLowerCase() === 'success' ||
-                      String(paymentStatus).toLowerCase() === 'paid' ||
-                      String(paymentStatus).toLowerCase() === 'completed';
+        // IMPORTANTE: qhantuyPaymentStatus es la variable local del objeto payment, no el estado de React
+        const isPaid = qhantuyPaymentStatus === 'success' || 
+                      qhantuyPaymentStatus === 'paid' || 
+                      qhantuyPaymentStatus === 'completed' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'success' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'paid' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'completed';
         
         console.log('🔍 Payment status check (OrderStatus):', {
-          paymentStatusFromQhantuy: paymentStatus,
+          qhantuyPaymentStatus: qhantuyPaymentStatus,
+          currentReactPaymentStatus: paymentStatus,
           isPaid,
           willSetSuccess: isPaid
         });
         
         if (isPaid) {
           console.log('✅ Payment confirmed! Setting paymentStatus to success (OrderStatus)');
-          console.log('   Current paymentStatus state before update:', paymentStatus);
+          console.log('   Payment status from Qhantuy:', qhantuyPaymentStatus);
+          console.log('   Current React paymentStatus state before update:', paymentStatus);
           
-          // Forzar actualización del estado
-          setPaymentStatus('success');
+          // IMPORTANTE: Detener cualquier polling activo antes de cambiar el estado
+          setPollingStopped(true);
+          setPollingStartTime(null);
           
-          // Esperar un tick para asegurar que el estado se actualice
-          await new Promise(resolve => setTimeout(resolve, 0));
+          // Forzar actualización del estado usando función de callback para asegurar que se actualice
+          setPaymentStatus((prevStatus) => {
+            console.log('   setPaymentStatus callback - prevStatus:', prevStatus, '-> success');
+            return 'success';
+          });
+          setErrorMessage(''); // Limpiar cualquier error previo
+          
+          // Esperar un poco más para asegurar que el estado se actualice y React re-renderice
+          await new Promise(resolve => setTimeout(resolve, 100));
           
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());
           
           console.log('✅ Payment status updated to success, storage saved (OrderStatus)');
+          console.log('   React paymentStatus state should now be: success');
           
           // Actualizar el pedido en Shopify
           try {
@@ -2361,12 +2374,16 @@ function QhantuPaymentValidatorOrderStatus() {
             console.error('Error updating Shopify order (OrderStatus):', updateError);
             // No mostrar error al usuario ya que el pago fue exitoso
           }
-        } else if (paymentStatus === 'rejected' || paymentStatus === 'failed' || payment?.payment_status === 'rejected') {
+        } else if (qhantuyPaymentStatus === 'rejected' || qhantuyPaymentStatus === 'failed') {
           setPaymentStatus('rejected');
           setErrorMessage('El pago fue rechazado');
         } else {
           // Todavía pendiente o en otro estado
-          console.log('Payment still pending or other status (OrderStatus):', paymentStatus, payment);
+          console.log('Payment still pending or other status (OrderStatus):', {
+            qhantuyPaymentStatus,
+            currentReactPaymentStatus: paymentStatus,
+            payment
+          });
         }
       } else if (!data.process) {
         console.warn('⚠️ CONSULTA DEUDA returned process: false (OrderStatus)', data.message || data);
