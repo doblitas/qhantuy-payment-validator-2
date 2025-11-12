@@ -2098,17 +2098,19 @@ function QhantuPaymentValidatorThankYou() {
             console.error('❌ Error updating Shopify order:', updateError);
             // No mostrar error al usuario ya que el pago fue exitoso, solo loguear
           }
-        } else if (paymentStatus === 'rejected' || 
-                   paymentStatus === 'failed' || 
-                   paymentStatus === 'denied' ||
-                   payment?.payment_status === 'rejected' ||
-                   payment?.payment_status === 'failed') {
-          console.log('❌ Payment rejected or failed:', paymentStatus);
+        } else if (qhantuyPaymentStatus === 'rejected' || 
+                   qhantuyPaymentStatus === 'failed' || 
+                   qhantuyPaymentStatus === 'denied') {
+          console.log('❌ Payment rejected or failed:', qhantuyPaymentStatus);
           setPaymentStatus('rejected');
           setErrorMessage('El pago fue rechazado o falló. Por favor intenta de nuevo.');
         } else {
           // Todavía pendiente o en otro estado
-          console.log('⏳ Payment still pending or other status:', paymentStatus, payment);
+          console.log('⏳ Payment still pending or other status:', {
+            qhantuyPaymentStatus,
+            currentReactPaymentStatus: paymentStatus,
+            payment
+          });
           // No cambiar el estado si todavía está pendiente
         }
       } else if (!data.process) {
