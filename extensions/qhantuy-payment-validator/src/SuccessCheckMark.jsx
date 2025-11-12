@@ -10,8 +10,6 @@ import { Image, Text } from '@shopify/ui-extensions-react/checkout';
  * @param {string} gifUrl - URL del GIF animado (opcional)
  */
 export function SuccessCheckMark({ size = 100, gifUrl = null }) {
-  const [showImage, setShowImage] = useState(true);
-  
   // URL a usar (priorizar la proporcionada)
   const imageUrl = gifUrl;
   
