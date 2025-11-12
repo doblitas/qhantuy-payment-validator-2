@@ -91,7 +91,59 @@ export default async function handler(req, res) {
         return res.status(400).json({
           success: false,
           process: false,
-          message: 'Faltan credenciales de Qhantuy (qhantuy_api_url, qhantuy_api_token, appkey)'
+          message: 'Faltan credenciales de Qhantuy (qhantuy_api_url, qhantuy_api_token, appkey)',
+          tip: 'Asegúrate de configurar todas las credenciales en los settings de la extensión (customize checkout).'
+        });
+      }
+
+      // Validar y normalizar la URL de Qhantuy
+      let normalizedQhantuyUrl = qhantuy_api_url.trim();
+      
+      // Remover trailing slash
+      normalizedQhantuyUrl = normalizedQhantuyUrl.replace(/\/$/, '');
+      
+      // Validar que sea una URL válida
+      try {
+        const urlObj = new URL(normalizedQhantuyUrl);
+        // Si la URL ya incluye un path (como /v2/checkout), usar esa URL directamente
+        // Si no, agregar /v2/checkout
+        if (urlObj.pathname && urlObj.pathname !== '/') {
+          // La URL ya tiene un path, usarla tal cual
+          normalizedQhantuyUrl = normalizedQhantuyUrl;
+        } else {
+          // La URL es la base, agregar /v2/checkout
+          normalizedQhantuyUrl = `${normalizedQhantuyUrl}/v2/checkout`;
+        }
+      } catch (urlError) {
+        console.error('❌ Invalid Qhantuy API URL format:', normalizedQhantuyUrl);
+        return res.status(400).json({
+          success: false,
+          process: false,
+          message: `URL de Qhantuy inválida: "${qhantuy_api_url}". Debe ser una URL válida (ej: https://checkout.qhantuy.com/external-api)`,
+          qhantuy_error: true,
+          tip: 'La URL debe ser la URL base de la API de Qhantuy, sin el endpoint /v2/checkout. Ejemplo: https://checkout.qhantuy.com/external-api'
+        });
+      }
+
+      // Validar formato del token (debe ser un string no vacío)
+      if (typeof qhantuy_api_token !== 'string' || qhantuy_api_token.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          process: false,
+          message: 'API Token de Qhantuy inválido o vacío',
+          qhantuy_error: true,
+          tip: 'Verifica que el API Token esté configurado correctamente en los settings de la extensión.'
+        });
+      }
+
+      // Validar formato del appkey (debe ser un string no vacío, preferiblemente 64 caracteres)
+      if (typeof appkey !== 'string' || appkey.trim().length === 0) {
+        return res.status(400).json({
+          success: false,
+          process: false,
+          message: 'AppKey de Qhantuy inválido o vacío',
+          qhantuy_error: true,
+          tip: 'Verifica que el AppKey esté configurado correctamente en los settings de la extensión. Debe ser una cadena de 64 caracteres.'
         });
       }
 
@@ -124,7 +176,8 @@ export default async function handler(req, res) {
       };
 
       console.log('🔍 Creating Qhantuy checkout via proxy:', {
-        qhantuy_api_url,
+        qhantuy_api_url_original: qhantuy_api_url,
+        qhantuy_api_url_normalized: normalizedQhantuyUrl,
         internal_code,
         currency_code,
         items_count: items.length,
@@ -132,8 +185,10 @@ export default async function handler(req, res) {
         customer_first_name: customer_first_name || '(vacío)',
         customer_last_name: customer_last_name || '(vacío)',
         has_appkey: !!appkey,
+        appkey_length: appkey ? appkey.length : 0,
         appkey_preview: appkey ? `${appkey.substring(0, 10)}...` : '(no proporcionado)',
         has_api_token: !!qhantuy_api_token,
+        api_token_length: qhantuy_api_token ? qhantuy_api_token.length : 0,
         api_token_preview: qhantuy_api_token ? `${qhantuy_api_token.substring(0, 10)}...` : '(no proporcionado)',
         credentials_source: 'From extension settings (customize checkout)'
       });
@@ -149,9 +204,8 @@ export default async function handler(req, res) {
       const timeoutId = setTimeout(() => controller.abort(), 30000);
 
       try {
-        // Llamar a la API de Qhantuy
-        const qhantuyUrl = `${qhantuy_api_url.replace(/\/$/, '')}/v2/checkout`;
-        const response = await fetch(qhantuyUrl, {
+        // Llamar a la API de Qhantuy usando la URL normalizada
+        const response = await fetch(normalizedQhantuyUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -176,16 +230,36 @@ export default async function handler(req, res) {
         if (isHtmlResponse) {
           console.error('❌ Qhantuy returned HTML error page instead of JSON:', {
             status: response.status,
-            url: qhantuyUrl,
-            responsePreview: responseText.substring(0, 200)
+            url: normalizedQhantuyUrl,
+            original_url: qhantuy_api_url,
+            responsePreview: responseText.substring(0, 500),
+            api_token_length: qhantuy_api_token ? qhantuy_api_token.length : 0,
+            appkey_length: appkey ? appkey.length : 0
           });
+          
+          // Intentar extraer más información del error HTML
+          let errorDetails = '';
+          if (responseText.includes('404') || responseText.includes('Not Found')) {
+            errorDetails = 'La URL de Qhantuy parece ser incorrecta o el endpoint no existe.';
+          } else if (responseText.includes('401') || responseText.includes('Unauthorized')) {
+            errorDetails = 'Las credenciales (API Token o AppKey) parecen ser incorrectas.';
+          } else if (responseText.includes('403') || responseText.includes('Forbidden')) {
+            errorDetails = 'Acceso denegado. Verifica que tus credenciales tengan los permisos necesarios.';
+          }
           
           return res.status(response.status || 500).json({
             success: false,
             process: false,
-            message: 'Qhantuy retornó una página de error. Por favor verifica tus credenciales de API y la URL de Qhantuy. Si el problema persiste, contacta a soporte de Qhantuy.',
+            message: `Qhantuy retornó una página de error (HTTP ${response.status || 500}). ${errorDetails} Por favor verifica tus credenciales de API y la URL de Qhantuy.`,
             qhantuy_error: true,
-            tip: 'Verifica que la URL de Qhantuy sea correcta (https://checkout.qhantuy.com/external-api) y que tus credenciales (API Token y AppKey) sean válidas.'
+            tip: `Verifica que:
+1. La URL de Qhantuy sea correcta (ejemplo: https://checkout.qhantuy.com/external-api)
+2. El API Token sea válido y esté completo
+3. El AppKey sea válido (debe tener 64 caracteres)
+4. Las credenciales correspondan al ambiente correcto (producción vs. desarrollo)`,
+            url_used: normalizedQhantuyUrl,
+            original_url: qhantuy_api_url,
+            http_status: response.status
           });
         }
 
