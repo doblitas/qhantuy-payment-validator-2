@@ -105,17 +105,36 @@ export default async function handler(req, res) {
       // Validar que sea una URL válida
       try {
         const urlObj = new URL(normalizedQhantuyUrl);
-        // Si la URL ya incluye un path (como /v2/checkout), usar esa URL directamente
-        // Si no, agregar /v2/checkout
-        if (urlObj.pathname && urlObj.pathname !== '/') {
-          // La URL ya tiene un path, usarla tal cual
+        
+        // Log para debugging
+        console.log('🔍 Parsing Qhantuy URL:', {
+          original: qhantuy_api_url,
+          normalized: normalizedQhantuyUrl,
+          pathname: urlObj.pathname,
+          hostname: urlObj.hostname,
+          protocol: urlObj.protocol
+        });
+        
+        // Si la URL ya incluye /v2/checkout, usar esa URL directamente
+        // Si incluye otro path (como /external-api), agregar /v2/checkout
+        // Si no tiene path o es solo /, agregar /v2/checkout
+        if (urlObj.pathname.includes('/v2/checkout')) {
+          // La URL ya incluye /v2/checkout, usar tal cual
+          console.log('✅ URL ya incluye /v2/checkout, usando tal cual');
           normalizedQhantuyUrl = normalizedQhantuyUrl;
+        } else if (urlObj.pathname && urlObj.pathname !== '/') {
+          // La URL tiene un path pero no /v2/checkout, agregar /v2/checkout
+          console.log('✅ URL tiene path, agregando /v2/checkout');
+          normalizedQhantuyUrl = `${normalizedQhantuyUrl}/v2/checkout`;
         } else {
           // La URL es la base, agregar /v2/checkout
+          console.log('✅ URL es base, agregando /v2/checkout');
           normalizedQhantuyUrl = `${normalizedQhantuyUrl}/v2/checkout`;
         }
+        
+        console.log('✅ URL final de Qhantuy:', normalizedQhantuyUrl);
       } catch (urlError) {
-        console.error('❌ Invalid Qhantuy API URL format:', normalizedQhantuyUrl);
+        console.error('❌ Invalid Qhantuy API URL format:', normalizedQhantuyUrl, urlError);
         return res.status(400).json({
           success: false,
           process: false,
@@ -234,12 +253,15 @@ export default async function handler(req, res) {
             original_url: qhantuy_api_url,
             responsePreview: responseText.substring(0, 500),
             api_token_length: qhantuy_api_token ? qhantuy_api_token.length : 0,
-            appkey_length: appkey ? appkey.length : 0
+            appkey_length: appkey ? appkey.length : 0,
+            method: 'POST'
           });
           
           // Intentar extraer más información del error HTML
           let errorDetails = '';
-          if (responseText.includes('404') || responseText.includes('Not Found')) {
+          if (response.status === 405) {
+            errorDetails = 'El método HTTP POST no está permitido en este endpoint. Verifica que la URL sea correcta y que el endpoint acepte POST.';
+          } else if (responseText.includes('404') || responseText.includes('Not Found')) {
             errorDetails = 'La URL de Qhantuy parece ser incorrecta o el endpoint no existe.';
           } else if (responseText.includes('401') || responseText.includes('Unauthorized')) {
             errorDetails = 'Las credenciales (API Token o AppKey) parecen ser incorrectas.';
@@ -252,7 +274,14 @@ export default async function handler(req, res) {
             process: false,
             message: `Qhantuy retornó una página de error (HTTP ${response.status || 500}). ${errorDetails} Por favor verifica tus credenciales de API y la URL de Qhantuy.`,
             qhantuy_error: true,
-            tip: `Verifica que:
+            tip: response.status === 405 
+              ? `Error 405 (Method Not Allowed):
+1. Verifica que la URL de Qhantuy sea correcta (ejemplo: https://checkout.qhantuy.com/external-api)
+2. NO incluyas /v2/checkout en la URL base - el sistema lo agregará automáticamente
+3. La URL debe ser la URL base de la API, no el endpoint completo
+4. Ejemplo correcto: https://checkout.qhantuy.com/external-api
+5. Ejemplo incorrecto: https://checkout.qhantuy.com/external-api/v2/checkout`
+              : `Verifica que:
 1. La URL de Qhantuy sea correcta (ejemplo: https://checkout.qhantuy.com/external-api)
 2. El API Token sea válido y esté completo
 3. El AppKey sea válido (debe tener 64 caracteres)
