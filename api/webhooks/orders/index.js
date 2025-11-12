@@ -52,14 +52,35 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Missing webhook signature' });
     }
 
-    // Verify webhook usando rawBody y rawHeader (no rawRequest)
-    // IMPORTANTE: En Vercel, el body ya viene parseado, pero necesitamos el string exacto
-    // para la validación HMAC. JSON.stringify puede cambiar el orden de las propiedades,
-    // pero Shopify API debería manejarlo correctamente.
-    const verified = await shopify.webhooks.validate({
-      rawBody: rawBody,
-      rawHeader: hmac
-    });
+    // Verify webhook
+    // IMPORTANTE: En Vercel, necesitamos pasar rawBody y rawHeader directamente
+    // NO pasamos rawRequest porque Vercel no tiene la misma estructura que Express
+    let verified = false;
+    try {
+      verified = await shopify.webhooks.validate({
+        rawBody: rawBody,
+        rawHeader: hmac
+      });
+    } catch (validateError) {
+      // Si falla la validación, loguear el error pero continuar
+      console.error('❌ Error during webhook validation:', validateError);
+      console.error('   Error details:', {
+        hasRawBody: !!rawBody,
+        rawBodyLength: rawBody?.length,
+        hasHmac: !!hmac,
+        hmacLength: hmac?.length,
+        errorMessage: validateError.message,
+        errorStack: validateError.stack
+      });
+      // En desarrollo, rechazar si hay error de validación
+      // En producción, podríamos considerar aceptar webhooks sin validación (NO RECOMENDADO)
+      if (process.env.NODE_ENV === 'development') {
+        return res.status(401).json({ 
+          error: 'Webhook validation error',
+          details: validateError.message 
+        });
+      }
+    }
 
     if (!verified) {
       console.error('❌ Webhook verification failed');
