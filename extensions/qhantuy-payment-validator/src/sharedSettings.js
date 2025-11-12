@@ -58,6 +58,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       check_interval: settings.check_interval || settingsRaw?.check_interval || sharedSettings?.check_interval || 10,
       max_check_duration: settings.max_check_duration || settingsRaw?.max_check_duration || sharedSettings?.max_check_duration || 30,
       backend_api_url: settings.backend_api_url || settingsRaw?.backend_api_url || sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
+      success_gif_url: settings.success_gif_url || settingsRaw?.success_gif_url || sharedSettings?.success_gif_url || '',
       source: sourceExtension,
       lastConfigured: sourceExtension,
       lastUpdated: new Date().toISOString()
@@ -70,6 +71,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       check_interval: sharedSettings?.check_interval || 10,
       max_check_duration: sharedSettings?.max_check_duration || 30,
       backend_api_url: sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
+      success_gif_url: sharedSettings?.success_gif_url || '',
       source: sharedSettings?.source || 'default',
       lastConfigured: sharedSettings?.lastConfigured || null,
       lastUpdated: sharedSettings?.lastUpdated || null
@@ -87,6 +89,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
         check_interval: mergedSettings.check_interval,
         max_check_duration: mergedSettings.max_check_duration,
         backend_api_url: mergedSettings.backend_api_url,
+        success_gif_url: mergedSettings.success_gif_url,
         lastConfigured: sourceExtension,
         lastUpdated: new Date().toISOString()
       }));
@@ -125,6 +128,7 @@ export function formatSettings(mergedSettings) {
     checkInterval: (mergedSettings.check_interval || 10) * 1000, // Convertir a milisegundos (default: 10 segundos para evitar 429)
     maxCheckDuration: (mergedSettings.max_check_duration || 30) * 60 * 1000, // Convertir a milisegundos
     backendApiUrl: backendApiUrl,
+    successGifUrl: mergedSettings.success_gif_url || '',
     source: mergedSettings.source || 'default',
     hasConfiguredSettings: !!(mergedSettings.qhantuy_api_token && mergedSettings.qhantuy_appkey)
   };

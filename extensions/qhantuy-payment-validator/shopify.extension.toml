@@ -62,3 +62,9 @@ api_access = true
   name = "Backend API URL"
   description = "URL completa del backend de la aplicación (ej: https://tu-app.herokuapp.com)"
   default = "https://qhantuy-payment-backend.vercel.app"
+  
+  [[extensions.settings.fields]]
+  key = "success_gif_url"
+  type = "single_line_text_field"
+  name = "URL del GIF de Éxito"
+  description = "URL del GIF animado para mostrar cuando el pago es exitoso (opcional)"
