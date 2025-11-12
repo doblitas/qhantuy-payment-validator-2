@@ -11,6 +11,7 @@
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
 import { restResources } from '@shopify/shopify-api/rest/admin/2024-04';
+import crypto from 'crypto';
 
 // Initialize Shopify API (same as web/backend/api.js)
 const shopify = shopifyApi({
@@ -22,6 +23,28 @@ const shopify = shopifyApi({
   isEmbeddedApp: true,
   restResources,
 });
+
+/**
+ * Validar webhook manualmente usando HMAC
+ * Esto evita el problema de nodeConvertRequest que intenta acceder a req.headers
+ */
+function validateWebhook(rawBody, hmac) {
+  if (!hmac || !rawBody) {
+    return false;
+  }
+  
+  // Calcular HMAC usando el API Secret
+  const calculatedHmac = crypto
+    .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+    .update(rawBody, 'utf8')
+    .digest('base64');
+  
+  // Comparar HMACs de forma segura (timing-safe)
+  return crypto.timingSafeEqual(
+    Buffer.from(hmac),
+    Buffer.from(calculatedHmac)
+  );
+}
 
 export default async function handler(req, res) {
   // Shopify webhooks use POST
@@ -52,40 +75,19 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Missing webhook signature' });
     }
 
-    // Verify webhook
-    // IMPORTANTE: En Vercel, necesitamos pasar rawBody y rawHeader directamente
-    // NO pasamos rawRequest porque Vercel no tiene la misma estructura que Express
-    let verified = false;
-    try {
-      verified = await shopify.webhooks.validate({
-        rawBody: rawBody,
-        rawHeader: hmac
-      });
-    } catch (validateError) {
-      // Si falla la validación, loguear el error pero continuar
-      console.error('❌ Error during webhook validation:', validateError);
-      console.error('   Error details:', {
-        hasRawBody: !!rawBody,
-        rawBodyLength: rawBody?.length,
-        hasHmac: !!hmac,
-        hmacLength: hmac?.length,
-        errorMessage: validateError.message,
-        errorStack: validateError.stack
-      });
-      // En desarrollo, rechazar si hay error de validación
-      // En producción, podríamos considerar aceptar webhooks sin validación (NO RECOMENDADO)
-      if (process.env.NODE_ENV === 'development') {
-        return res.status(401).json({ 
-          error: 'Webhook validation error',
-          details: validateError.message 
-        });
-      }
-    }
-
+    // Verify webhook usando validación manual de HMAC
+    // Esto evita el problema de shopify.webhooks.validate() que intenta acceder a req.headers
+    // en nodeConvertRequest cuando se usa en Vercel serverless functions
+    const verified = validateWebhook(rawBody, hmac);
+    
     if (!verified) {
       console.error('❌ Webhook verification failed');
+      console.error('   HMAC provided:', hmac ? `${hmac.substring(0, 20)}...` : 'MISSING');
+      console.error('   Raw body length:', rawBody?.length || 0);
       return res.status(401).json({ error: 'Webhook verification failed' });
     }
+    
+    console.log('✅ Webhook HMAC verified successfully');
 
     // Parse body si es necesario (ya debería estar parseado en Vercel)
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
