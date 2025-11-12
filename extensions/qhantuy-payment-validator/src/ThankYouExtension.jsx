@@ -1946,7 +1946,8 @@ function QhantuPaymentValidatorThankYou() {
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // La respuesta real puede tener diferentes nombres de campos, incluso con espacios
         // Buscar en todas las keys del objeto (algunas APIs devuelven campos con espacios al final)
-        const paymentStatus = payment.payment_status || 
+        // IMPORTANTE: Usar nombre diferente para evitar confusión con el estado de React
+        const qhantuyPaymentStatus = payment.payment_status || 
                              payment.status || 
                              payment.paymentStatus ||
                              payment.payment_state ||
@@ -1956,16 +1957,21 @@ function QhantuPaymentValidatorThankYou() {
                                const keys = Object.keys(payment);
                                for (const key of keys) {
                                  const normalizedKey = key.trim().toLowerCase();
-                                 if (normalizedKey === 'payment_status' || normalizedKey === 'status') {
+                                 if (normalizedKey === 'payment_status' || 
+                                     normalizedKey === 'status' || 
+                                     normalizedKey === 'paymentstatus' ||
+                                     normalizedKey === 'payment_state' ||
+                                     normalizedKey === 'state') {
                                    return payment[key];
                                  }
                                }
                                return null;
                              })();
         
-        console.log('📊 Payment details from CONSULTA DE DEUDA:', {
+        console.log('📊 Payment details from CONSULTA DE DEUDA (ThankYou):', {
           transaction_id: payment.id || payment.transaction_id || payment.transactionId || cleanTxId,
-          payment_status: paymentStatus,
+          qhantuyPaymentStatus: qhantuyPaymentStatus,
+          currentReactPaymentStatus: paymentStatus, // Estado actual de React
           amount: payment.checkout_amount || payment.amount || payment.checkoutAmount,
           currency: payment.checkout_currency || payment.currency || payment.checkoutCurrency,
           fullPayment: payment,
@@ -1974,16 +1980,17 @@ function QhantuPaymentValidatorThankYou() {
         
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas
-        // IMPORTANTE: paymentStatus aquí es la variable local del objeto payment, no el estado de React
-        const isPaid = paymentStatus === 'success' || 
-                      paymentStatus === 'paid' || 
-                      paymentStatus === 'completed' ||
-                      String(paymentStatus).toLowerCase() === 'success' ||
-                      String(paymentStatus).toLowerCase() === 'paid' ||
-                      String(paymentStatus).toLowerCase() === 'completed';
+        // IMPORTANTE: qhantuyPaymentStatus es la variable local del objeto payment, no el estado de React
+        const isPaid = qhantuyPaymentStatus === 'success' || 
+                      qhantuyPaymentStatus === 'paid' || 
+                      qhantuyPaymentStatus === 'completed' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'success' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'paid' ||
+                      String(qhantuyPaymentStatus).toLowerCase() === 'completed';
         
         console.log('🔍 Payment status verification (ThankYou):', {
-          paymentStatusFromQhantuy: paymentStatus,
+          qhantuyPaymentStatus: qhantuyPaymentStatus,
+          currentReactPaymentStatus: paymentStatus,
           isPaid,
           willSetSuccess: isPaid,
           transaction_id: payment.id || payment.transaction_id || cleanTxId,
@@ -1992,14 +1999,22 @@ function QhantuPaymentValidatorThankYou() {
         
         if (isPaid) {
           console.log('✅ Payment confirmed! Setting paymentStatus to success (ThankYou)');
-          console.log('   Current paymentStatus state before update:', paymentStatus);
+          console.log('   Payment status from Qhantuy:', qhantuyPaymentStatus);
+          console.log('   Current React paymentStatus state before update:', paymentStatus);
           
-          // Forzar actualización del estado
-          setPaymentStatus('success');
+          // IMPORTANTE: Detener cualquier polling activo antes de cambiar el estado
+          setPollingStopped(true);
+          setPollingStartTime(null);
+          
+          // Forzar actualización del estado usando función de callback para asegurar que se actualice
+          setPaymentStatus((prevStatus) => {
+            console.log('   setPaymentStatus callback - prevStatus:', prevStatus, '-> success');
+            return 'success';
+          });
           setErrorMessage(''); // Limpiar cualquier error previo
           
-          // Esperar un tick para asegurar que el estado se actualice
-          await new Promise(resolve => setTimeout(resolve, 0));
+          // Esperar un poco más para asegurar que el estado se actualice y React re-renderice
+          await new Promise(resolve => setTimeout(resolve, 100));
           
           await storage.write('payment_status', 'success');
           await storage.write('payment_verified_at', new Date().toISOString());
