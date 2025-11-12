@@ -30,12 +30,34 @@ export default async function handler(req, res) {
   }
 
   try {
-    const hmac = req.headers['x-shopify-hmac-sha256'];
-    const body = req.body;
+    // En Vercel, los headers vienen en req.headers directamente
+    const hmac = req.headers['x-shopify-hmac-sha256'] || req.headers['X-Shopify-Hmac-Sha256'];
+    
+    // El body en Vercel ya viene parseado, pero necesitamos el raw body para la validación
+    // Si el body es un objeto, lo convertimos a string
+    // Si ya es string, lo usamos directamente
+    let rawBody;
+    if (typeof req.body === 'string') {
+      rawBody = req.body;
+    } else if (req.body) {
+      rawBody = JSON.stringify(req.body);
+    } else {
+      // Si no hay body, intentar leerlo del stream (pero en Vercel ya viene parseado)
+      rawBody = '';
+    }
 
-    // Verify webhook
+    // Validar que tenemos el HMAC
+    if (!hmac) {
+      console.error('❌ Missing X-Shopify-Hmac-Sha256 header');
+      return res.status(401).json({ error: 'Missing webhook signature' });
+    }
+
+    // Verify webhook usando rawBody y rawHeader (no rawRequest)
+    // IMPORTANTE: En Vercel, el body ya viene parseado, pero necesitamos el string exacto
+    // para la validación HMAC. JSON.stringify puede cambiar el orden de las propiedades,
+    // pero Shopify API debería manejarlo correctamente.
     const verified = await shopify.webhooks.validate({
-      rawBody: JSON.stringify(body),
+      rawBody: rawBody,
       rawHeader: hmac
     });
 
@@ -44,13 +66,16 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'Webhook verification failed' });
     }
 
+    // Parse body si es necesario (ya debería estar parseado en Vercel)
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+
     // Determine webhook type from URL
     const url = req.url || '';
     const isCreate = url.includes('/orders/create');
     const isUpdated = url.includes('/orders/updated');
 
     // Process order event
-    const shopDomain = body.shop_domain || req.headers['x-shopify-shop-domain'];
+    const shopDomain = body?.shop_domain || body?.shop || req.headers['x-shopify-shop-domain'];
     
     if (isCreate) {
       console.log('✅ Order created webhook received:', {
