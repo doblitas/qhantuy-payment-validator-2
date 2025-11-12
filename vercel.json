@@ -36,19 +36,19 @@
     },
     {
       "source": "/auth/callback",
-      "destination": "/api/auth-callback.js"
+      "destination": "/api/auth/index.js"
     },
     {
       "source": "/auth",
-      "destination": "/api/auth.js"
+      "destination": "/api/auth/index.js"
     },
     {
       "source": "/api/auth",
-      "destination": "/api/auth.js"
+      "destination": "/api/auth/index.js"
     },
     {
       "source": "/api/auth/callback",
-      "destination": "/api/auth-callback.js"
+      "destination": "/api/auth/index.js"
     },
     {
       "source": "/api/orders/save-transaction-id",
@@ -88,11 +88,11 @@
     },
     {
       "source": "/api/webhooks/orders/create",
-      "destination": "/api/webhooks/orders/create.js"
+      "destination": "/api/webhooks/orders/index.js"
     },
     {
       "source": "/api/webhooks/orders/updated",
-      "destination": "/api/webhooks/orders/updated.js"
+      "destination": "/api/webhooks/orders/index.js"
     }
   ]
 }

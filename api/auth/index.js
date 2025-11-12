@@ -1,7 +1,16 @@
+/**
+ * Vercel Serverless Function
+ * GET /auth - Inicia el proceso de OAuth
+ * GET /auth/callback - Recibe el callback de OAuth
+ * GET /api/auth - Alias para /auth
+ * GET /api/auth/callback - Alias para /auth/callback
+ * 
+ * Consolidated auth handler to stay within Vercel Hobby plan limit (12 functions)
+ */
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
 import { restResources } from '@shopify/shopify-api/rest/admin/2024-04';
-import { storeAccessToken } from '../web/backend/storage.js';
+import { storeAccessToken } from '../../web/backend/storage.js';
 
 // Initialize Shopify API
 const shopify = shopifyApi({
@@ -14,82 +23,80 @@ const shopify = shopifyApi({
   restResources,
 });
 
-/**
- * Vercel Serverless Function
- * GET /auth/callback
- * Este endpoint recibe el callback de OAuth cuando instalas la app en una tienda
- */
 export default async function handler(req, res) {
   try {
-    // Shopify envía una petición GET con los parámetros de OAuth
-    const callback = await shopify.auth.callback({
-      rawRequest: req,
-      rawResponse: res,
-    });
-
-    const { session } = callback;
+    // Determine operation from URL
+    const url = req.url || '';
+    const isCallback = url.includes('/callback');
     
-    // IMPORTANTE: El accessToken está aquí
-    const accessToken = session.accessToken;
-    let shopDomain = session.shop;
-    
-    // Normalizar shop domain antes de guardar (igual que en storage.js)
-    if (shopDomain) {
-      shopDomain = String(shopDomain)
-        .trim()
-        .toLowerCase()
-        .replace(/^https?:\/\//, '') // Remove protocol
-        .replace(/\/$/, '') // Remove trailing slash
-        .replace(/^www\./, ''); // Remove www prefix if present
-      
-      // Ensure it ends with .myshopify.com or add it if missing
-      if (!shopDomain.includes('.myshopify.com')) {
-        shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
-      }
-    }
-    
-    // Validar que tenemos los datos necesarios
-    if (!accessToken || !shopDomain) {
-      console.error('❌ Missing accessToken or shopDomain:', {
-        hasAccessToken: !!accessToken,
-        hasShopDomain: !!shopDomain,
-        shopDomain: shopDomain
+    if (isCallback) {
+      // Handle OAuth callback
+      const callback = await shopify.auth.callback({
+        rawRequest: req,
+        rawResponse: res,
       });
-      throw new Error('Missing accessToken or shopDomain from OAuth callback');
-    }
-    
-    console.log('📋 Normalized shop domain:', shopDomain);
-    console.log('🔑 Access token preview:', accessToken ? `${accessToken.substring(0, 10)}...` : 'MISSING');
-    
-    // ✅ GUARDAR AUTOMÁTICAMENTE EN EL SERVIDOR (PERSISTENTE)
-    await storeAccessToken(shopDomain, accessToken);
-    
-    // Verificar que se guardó correctamente
-    const { hasAccessToken } = await import('../web/backend/storage.js');
-    const tokenStored = await hasAccessToken(shopDomain);
-    if (!tokenStored) {
-      console.error('⚠️  WARNING: Token was stored but verification failed for:', shopDomain);
-      console.error('   This might indicate a Redis connection issue.');
-    } else {
-      console.log('✅ Token storage verified successfully for:', shopDomain);
-    }
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('✅ APP INSTALADA EXITOSAMENTE');
-    console.log('✅ TOKEN GUARDADO AUTOMÁTICAMENTE EN EL SERVIDOR');
-    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    console.log('');
-    console.log('📋 TIENDA:', shopDomain);
-    // SECURITY: No log access tokens to prevent exposure in logs
-    console.log('🔑 ACCESS TOKEN: [REDACTED - Token stored securely]');
-    console.log('💾 Estado: Guardado automáticamente');
-    console.log('');
-    console.log('ℹ️  El token se usará automáticamente para todas las peticiones.');
-    console.log('   No necesitas configurarlo manualmente en Vercel.');
-    console.log('');
-    
-    // Crear una página HTML que muestre el token (útil cuando se instala desde link)
-    // Esto permite ver el token directamente en el navegador
-    const htmlResponse = `
+
+      const { session } = callback;
+      
+      // IMPORTANTE: El accessToken está aquí
+      const accessToken = session.accessToken;
+      let shopDomain = session.shop;
+      
+      // Normalizar shop domain antes de guardar (igual que en storage.js)
+      if (shopDomain) {
+        shopDomain = String(shopDomain)
+          .trim()
+          .toLowerCase()
+          .replace(/^https?:\/\//, '') // Remove protocol
+          .replace(/\/$/, '') // Remove trailing slash
+          .replace(/^www\./, ''); // Remove www prefix if present
+        
+        // Ensure it ends with .myshopify.com or add it if missing
+        if (!shopDomain.includes('.myshopify.com')) {
+          shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
+        }
+      }
+      
+      // Validar que tenemos los datos necesarios
+      if (!accessToken || !shopDomain) {
+        console.error('❌ Missing accessToken or shopDomain:', {
+          hasAccessToken: !!accessToken,
+          hasShopDomain: !!shopDomain,
+          shopDomain: shopDomain
+        });
+        throw new Error('Missing accessToken or shopDomain from OAuth callback');
+      }
+      
+      console.log('📋 Normalized shop domain:', shopDomain);
+      console.log('🔑 Access token preview:', accessToken ? `${accessToken.substring(0, 10)}...` : 'MISSING');
+      
+      // ✅ GUARDAR AUTOMÁTICAMENTE EN EL SERVIDOR (PERSISTENTE)
+      await storeAccessToken(shopDomain, accessToken);
+      
+      // Verificar que se guardó correctamente
+      const { hasAccessToken } = await import('../../web/backend/storage.js');
+      const tokenStored = await hasAccessToken(shopDomain);
+      if (!tokenStored) {
+        console.error('⚠️  WARNING: Token was stored but verification failed for:', shopDomain);
+        console.error('   This might indicate a Redis connection issue.');
+      } else {
+        console.log('✅ Token storage verified successfully for:', shopDomain);
+      }
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('✅ APP INSTALADA EXITOSAMENTE');
+      console.log('✅ TOKEN GUARDADO AUTOMÁTICAMENTE EN EL SERVIDOR');
+      console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      console.log('');
+      console.log('📋 TIENDA:', shopDomain);
+      console.log('🔑 ACCESS TOKEN: [REDACTED - Token stored securely]');
+      console.log('💾 Estado: Guardado automáticamente');
+      console.log('');
+      console.log('ℹ️  El token se usará automáticamente para todas las peticiones.');
+      console.log('   No necesitas configurarlo manualmente en Vercel.');
+      console.log('');
+      
+      // Crear una página HTML que muestre el token (útil cuando se instala desde link)
+      const htmlResponse = `
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -285,27 +292,36 @@ export default async function handler(req, res) {
     </script>
 </body>
 </html>
-    `;
-    
-    // Enviar la respuesta HTML en lugar de redirect
-    // Esto permite ver el token directamente cuando se instala desde link
-    res.status(200).send(htmlResponse);
-    
+      `;
+      
+      // Enviar la respuesta HTML
+      res.status(200).send(htmlResponse);
+      
+    } else {
+      // Handle OAuth begin
+      await shopify.auth.begin({
+        shop: shopify.utils.sanitizeShop(req.query.shop, true),
+        callbackPath: '/auth/callback',
+        isOnline: false,
+        rawRequest: req,
+        rawResponse: res,
+      });
+    }
   } catch (error) {
-    console.error('❌ Error in OAuth callback:', error);
+    console.error('❌ Error in auth handler:', error);
     // SECURITY: Don't expose error details to client in production
     const errorMessage = process.env.NODE_ENV === 'development' 
       ? error.message 
-      : 'An error occurred during app installation. Please try again or contact support.';
+      : 'An error occurred during authentication. Please try again or contact support.';
     
     res.status(500).send(`
       <html>
         <head>
-          <title>Installation Error</title>
+          <title>Authentication Error</title>
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
         </head>
         <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px;">
-          <h1>Installation Error</h1>
+          <h1>Authentication Error</h1>
           <p>${errorMessage}</p>
           ${process.env.NODE_ENV === 'development' ? '<p>Check Vercel logs for more details.</p>' : ''}
         </body>

@@ -1,8 +1,9 @@
 /**
  * Vercel Serverless Function
+ * POST /api/webhooks/orders/create
  * POST /api/webhooks/orders/updated
  * 
- * Handles Shopify order update webhooks
+ * Consolidated webhook handler for Shopify order events
  * 
  * IMPORTANTE: Los webhooks de Shopify pueden venir con el dominio interno (e.g., e3d607.myshopify.com)
  * pero esto no afecta la verificación del webhook, ya que la verificación se basa en el HMAC.
@@ -39,23 +40,47 @@ export default async function handler(req, res) {
     });
 
     if (!verified) {
-      console.error('❌ Webhook verification failed for orders/updated');
+      console.error('❌ Webhook verification failed');
       return res.status(401).json({ error: 'Webhook verification failed' });
     }
 
-    // Process order updated event
+    // Determine webhook type from URL
+    const url = req.url || '';
+    const isCreate = url.includes('/orders/create');
+    const isUpdated = url.includes('/orders/updated');
+
+    // Process order event
     const shopDomain = body.shop_domain || req.headers['x-shopify-shop-domain'];
-    console.log('✅ Order updated webhook received:', {
-      order_id: body.id,
-      shop_domain: shopDomain,
-      order_number: body.order_number,
-      financial_status: body.financial_status,
-      fulfillment_status: body.fulfillment_status
-    });
+    
+    if (isCreate) {
+      console.log('✅ Order created webhook received:', {
+        order_id: body.id,
+        shop_domain: shopDomain,
+        order_number: body.order_number,
+        financial_status: body.financial_status
+      });
+    } else if (isUpdated) {
+      console.log('✅ Order updated webhook received:', {
+        order_id: body.id,
+        shop_domain: shopDomain,
+        order_number: body.order_number,
+        financial_status: body.financial_status,
+        fulfillment_status: body.fulfillment_status
+      });
+    } else {
+      // Fallback: try to determine from body or headers
+      const topic = req.headers['x-shopify-topic'] || body.topic;
+      console.log('✅ Order webhook received (unknown type):', {
+        order_id: body.id,
+        shop_domain: shopDomain,
+        topic: topic,
+        url: url
+      });
+    }
 
     return res.status(200).json({ success: true });
   } catch (error) {
-    console.error('❌ Error handling order update webhook:', error);
+    console.error('❌ Error handling order webhook:', error);
     return res.status(500).json({ 
       error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
     });
