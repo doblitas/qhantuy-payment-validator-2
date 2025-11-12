@@ -7,7 +7,8 @@ embedded = true
 
 [access_scopes]
 # Required scopes for order access and checkout customization
-scopes = "read_orders,write_orders,read_checkouts"
+# read_customers: Necesario para acceder a datos del cliente (email, nombre, apellido)
+scopes = "read_orders,write_orders,read_checkouts,read_customers"
 
 [auth]
 redirect_urls = [

@@ -8,7 +8,11 @@
     },
     {
       "source": "/api/qhantuy/check-debt",
-      "destination": "/api/qhantuy/check-debt.js"
+      "destination": "/api/qhantuy/index.js"
+    },
+    {
+      "source": "/api/qhantuy/create-checkout",
+      "destination": "/api/qhantuy/index.js"
     },
     {
       "source": "/api/orders/confirm-payment",

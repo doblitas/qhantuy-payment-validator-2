@@ -247,19 +247,115 @@ export default async function handler(req, res) {
   };
 
   // Check OAuth token details
+  // Si no hay token, intentar buscar dominio real si shopDomain es un ID interno
+  let finalShopDomain = shopDomain;
+  let token = null;
+  
   if (oauthTokenExists) {
     try {
-      const token = await getAccessToken(shopDomain);
+      token = await getAccessToken(shopDomain);
       verification.checks.token_valid = !!token;
       verification.details.token_preview = token ? `${token.substring(0, 15)}...` : 'empty';
       verification.details.token_length = token ? token.length : 0;
     } catch (error) {
       verification.details.token_error = error.message;
     }
-  } else {
-    verification.details.token_status = 'not_found';
-    verification.details.install_instructions = `Install the app at: ${process.env.SHOPIFY_APP_URL || 'your-backend-url'}/auth?shop=${shopDomain}`;
   }
+  
+  // Si no hay token y shopDomain parece ser un ID interno, buscar dominio real
+  if (!token && shopDomain) {
+    const normalizedShop = String(shopDomain)
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/$/, '')
+      .replace(/^www\./, '');
+    
+    const domainPart = normalizedShop.replace('.myshopify.com', '');
+    const isInternalId = domainPart.length >= 6 && domainPart.length <= 8 && /^[a-z0-9]+$/.test(domainPart);
+    
+    if (isInternalId) {
+      console.log('⚠️  Shop domain appears to be internal ID. Searching for real domain...');
+      
+      try {
+        const redisUrl = process.env.qhantuy_REDIS_URL || process.env.REDIS_URL || process.env.KV_REST_API_URL;
+        let redis = null;
+        
+        if (redisUrl) {
+          try {
+            const Redis = (await import('ioredis')).default;
+            redis = new Redis(redisUrl, {
+              connectTimeout: 3000,
+              retryStrategy: () => null,
+              lazyConnect: true,
+            });
+            await redis.connect();
+          } catch (ioredisError) {
+            try {
+              const { createClient } = await import('redis');
+              redis = createClient({ url: redisUrl });
+              await redis.connect();
+            } catch (redisError) {
+              console.warn('⚠️  Could not connect to Redis for domain lookup:', redisError.message);
+            }
+          }
+        }
+        
+        if (redis) {
+          try {
+            const allTokenKeys = await redis.keys('shop:*:token');
+            
+            if (allTokenKeys.length > 0) {
+              console.log(`🔍 Found ${allTokenKeys.length} registered shop tokens`);
+              
+              for (const key of allTokenKeys) {
+                const match = key.match(/^shop:(.+):token$/);
+                if (match) {
+                  const realDomain = match[1];
+                  const foundToken = await redis.get(key);
+                  
+                  if (foundToken && realDomain !== normalizedShop) {
+                    console.log(`✅ Found real domain with token: ${realDomain}`);
+                    finalShopDomain = realDomain;
+                    token = foundToken;
+                    verification.checks.token_valid = true;
+                    verification.checks.oauth_token = true;
+                    verification.details.token_preview = token ? `${token.substring(0, 15)}...` : 'empty';
+                    verification.details.token_length = token ? token.length : 0;
+                    verification.details.real_shop_domain = realDomain;
+                    verification.details.internal_id_received = shopDomain;
+                    break;
+                  }
+                }
+              }
+            }
+          } catch (redisError) {
+            console.warn('⚠️  Error searching Redis for real domain:', redisError.message);
+          } finally {
+            try {
+              if (redis && typeof redis.quit === 'function') {
+                await redis.quit();
+              } else if (redis && typeof redis.disconnect === 'function') {
+                await redis.disconnect();
+              }
+            } catch (closeError) {
+              // Ignorar errores al cerrar
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️  Error in domain lookup fallback:', error.message);
+      }
+    }
+  }
+  
+  if (!token) {
+    verification.details.token_status = 'not_found';
+    verification.details.install_instructions = `Install the app at: ${process.env.SHOPIFY_APP_URL || 'https://qhantuy-payment-backend.vercel.app'}/auth?shop=${finalShopDomain}`;
+  }
+  
+  // Actualizar shop en verification con el dominio real encontrado
+  verification.shop = finalShopDomain;
 
   // Check Shopify API configuration
   const hasApiKey = !!process.env.SHOPIFY_API_KEY;

@@ -13,6 +13,7 @@ import {
   useStorage,
 } from '@shopify/ui-extensions-react/checkout';
 import { syncSharedSettings, formatSettings } from './sharedSettings.js';
+import { SuccessCheckMark } from './SuccessCheckMark.jsx';
 
 function QhantuPaymentValidatorOrderStatus() {
   const api = useExtensionApi();
@@ -28,13 +29,34 @@ function QhantuPaymentValidatorOrderStatus() {
     console.log('Settings keys:', settingsRaw ? Object.keys(settingsRaw) : 'no settings');
     console.log('Cost:', api?.cost);
     console.log('Order:', api?.order);
+    console.log('Order completo (JSON):', JSON.stringify(api?.order, null, 2));
+    console.log('Order.customer:', api?.order?.customer);
+    console.log('Order.customer completo (JSON):', JSON.stringify(api?.order?.customer, null, 2));
+    console.log('Order.billingAddress:', api?.order?.billingAddress);
+    console.log('Order.billingAddress completo (JSON):', JSON.stringify(api?.order?.billingAddress, null, 2));
+    console.log('Order.shippingAddress:', api?.order?.shippingAddress);
+    console.log('Order.shippingAddress completo (JSON):', JSON.stringify(api?.order?.shippingAddress, null, 2));
+    console.log('Order.email:', api?.order?.email);
     console.log('Contact:', api?.contact);
+    console.log('Contact completo (JSON):', JSON.stringify(api?.contact, null, 2));
     console.log('Billing Address:', api?.order?.billingAddress);
     console.log('Shop:', api?.shop);
+    console.log('Lines:', api?.lines);
+    console.log('Purchase:', api?.purchase);
+    console.log('Purchase completo (JSON):', JSON.stringify(api?.purchase, null, 2));
+    console.log('Purchase.customer:', api?.purchase?.customer);
+    console.log('Purchase.customer completo (JSON):', JSON.stringify(api?.purchase?.customer, null, 2));
+    console.log('BuyerIdentity:', api?.buyerIdentity);
+    console.log('BuyerIdentity completo (JSON):', JSON.stringify(api?.buyerIdentity, null, 2));
+    console.log('BuyerIdentity.purchase:', api?.buyerIdentity?.purchase);
+    console.log('BuyerIdentity.purchase.customer:', api?.buyerIdentity?.purchase?.customer);
+    console.log('BuyerIdentity.purchase.customer completo (JSON):', JSON.stringify(api?.buyerIdentity?.purchase?.customer, null, 2));
+    console.log('BuyerIdentity.customer:', api?.buyerIdentity?.customer);
+    console.log('BuyerIdentity.customer completo (JSON):', JSON.stringify(api?.buyerIdentity?.customer, null, 2));
     console.log('================================');
   }, [api, settingsRaw]);
   
-  const { shop, cost, order, lines } = api;
+  const { shop, cost, order, lines, purchase, buyerIdentity } = api;
   
   // Estado
   const [orderData, setOrderData] = useState(order);
@@ -439,6 +461,114 @@ function QhantuPaymentValidatorOrderStatus() {
   }, [orderData, order, api, getSignalValue]);
   
   // Función para crear checkout en Qhantuy
+  // Función para consultar el estado de deuda usando transaction_id
+  const checkExistingPayment = useCallback(async (txId) => {
+    try {
+      const formattedSettings = formatSettings(settingsRaw);
+      const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+      const apiUrl = formattedSettings.qhantuyApiUrl || 'https://checkout.qhantuy.com/external-api';
+      const apiToken = formattedSettings.qhantuyApiToken;
+      const appkey = formattedSettings.qhantuyAppkey;
+      
+      if (!apiToken || !appkey) {
+        console.warn('⚠️ Qhantuy credentials not available for check-debt');
+        return null;
+      }
+      
+      const { number: orderNumber, id: orderId } = getOrderIdentifiers();
+      const internalCode = `SHOPIFY-ORDER-${orderNumber || orderId || id}`;
+      
+      // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
+      let shopDomain = shop?.domain || shop?.myshopifyDomain;
+      
+      // Normalizar shopDomain
+      if (shopDomain) {
+        shopDomain = String(shopDomain)
+          .trim()
+          .toLowerCase()
+          .replace(/^https?:\/\//, '')
+          .replace(/\/$/, '')
+          .replace(/^www\./, '');
+        
+        if (!shopDomain.includes('.myshopify.com')) {
+          shopDomain = shopDomain.includes('.') ? shopDomain : `${shopDomain}.myshopify.com`;
+        }
+      }
+      
+      const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
+      
+      console.log('🔍 Checking existing payment status (OrderStatus):', {
+        transaction_id: txId,
+        internal_code: internalCode,
+        shopDomain
+      });
+      
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+      
+      try {
+        const response = await fetch(checkDebtUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Shop-Domain': shopDomain || ''
+          },
+          body: JSON.stringify({
+            transaction_id: txId,
+            internal_code: internalCode,
+            qhantuy_api_url: apiUrl
+          }),
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.warn('⚠️ Check-debt failed:', response.status, errorText);
+          return null;
+        }
+        
+        const responseData = await response.json();
+        console.log('✅ Check-debt response (OrderStatus):', responseData);
+        
+        // El backend retorna { success: true, data: {...} }
+        const data = responseData.data || responseData;
+        
+        // La respuesta puede tener payments o items según la documentación
+        const paymentItems = data.payments || data.items || [];
+        
+        if (responseData.success && data.process && paymentItems.length > 0) {
+          const payment = paymentItems[0];
+          const paymentStatus = payment.payment_status || payment.status || payment.paymentStatus;
+          
+          // Obtener QR si está disponible
+          const qrImage = payment.qr_image || payment.image_data || payment.qr_data;
+          
+          return {
+            transaction_id: txId,
+            payment_status: paymentStatus,
+            qr_image: qrImage,
+            payment: payment
+          };
+        }
+        
+        return null;
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          console.warn('⚠️ Check-debt timeout');
+        } else {
+          console.warn('⚠️ Check-debt error:', fetchError.message);
+        }
+        return null;
+      }
+    } catch (error) {
+      console.error('❌ Error in checkExistingPayment:', error);
+      return null;
+    }
+  }, [settingsRaw, shop, getOrderIdentifiers, id]);
+  
   const createQhantuCheckout = useCallback(async () => {
     if (!orderData) {
       console.error('Missing orderData');
@@ -526,60 +656,298 @@ function QhantuPaymentValidatorOrderStatus() {
     // Obtener el objeto order real de orderData (puede estar anidado)
     const actualOrder = orderData?.order || orderData;
     
+    // DEBUG: Log detallado de todos los objetos disponibles
+    console.log('🔍 DEBUG DETALLADO DE DATOS DEL CLIENTE (OrderStatus):');
+    console.log('   order (directo):', order);
+    console.log('   order (JSON):', JSON.stringify(order, null, 2));
+    console.log('   orderData:', orderData);
+    console.log('   actualOrder:', actualOrder);
+    console.log('   api.order:', api?.order);
+    console.log('   api.purchase:', api?.purchase);
+    console.log('   api.buyerIdentity:', api?.buyerIdentity);
+    console.log('   api.contact:', api?.contact);
+    
     // Obtener email del cliente desde múltiples fuentes
-    const customerEmail = api?.contact?.email ||
-                         api?.buyerIdentity?.customer?.email ||
-                         orderData?.order?.email ||
-                         orderData?.email || 
-                         actualOrder?.email ||
-                         actualOrder?.customer?.email ||
-                         order?.email ||
-                         order?.contact?.email ||
-                         '';
+    // IMPORTANTE: En Shopify Extensions, muchos valores son signals reactivos que necesitan getSignalValue()
+    // Priorizar: buyerIdentity (clientes registrados) > order.customer > purchase.customer > billingAddress > contact
+    const customerEmail = (() => {
+      // PRIMERO: Intentar desde buyerIdentity (clientes registrados/logueados)
+      // buyerIdentity.customer tiene los datos del cliente autenticado
+      // Puede ser un signal, así que usar getSignalValue
+      const buyerIdentityCustomer = getSignalValue(api?.buyerIdentity?.customer) || getSignalValue(buyerIdentity?.customer);
+      const buyerIdentityPurchaseCustomer = getSignalValue(buyerIdentity?.purchase?.customer) || getSignalValue(api?.buyerIdentity?.purchase?.customer);
+      
+      const buyerIdentityEmail = buyerIdentityCustomer?.email ||
+                                buyerIdentityPurchaseCustomer?.email ||
+                                getSignalValue(api?.buyerIdentity?.customer?.email) ||
+                                getSignalValue(buyerIdentity?.purchase?.customer?.email);
+      if (buyerIdentityEmail) {
+        console.log('✅ Email obtenido desde buyerIdentity (cliente registrado):', buyerIdentityEmail);
+        return buyerIdentityEmail;
+      }
+      
+      // SEGUNDO: Intentar desde order.customer (funciona para registrados e invitados)
+      // order.customer puede ser un signal
+      const orderCustomer = getSignalValue(order?.customer) || 
+                           getSignalValue(actualOrder?.customer) ||
+                           getSignalValue(orderData?.order?.customer) ||
+                           getSignalValue(orderData?.customer);
+      
+      const orderCustomerEmail = orderCustomer?.email ||
+                                getSignalValue(order?.customer?.email) ||
+                                getSignalValue(actualOrder?.customer?.email) ||
+                                getSignalValue(orderData?.order?.customer?.email) ||
+                                getSignalValue(orderData?.customer?.email);
+      if (orderCustomerEmail) {
+        console.log('✅ Email obtenido desde order.customer:', orderCustomerEmail);
+        return orderCustomerEmail;
+      }
+      
+      // TERCERO: Intentar desde order.email (directo)
+      const orderDirectEmail = getSignalValue(order?.email) ||
+                              getSignalValue(orderData?.order?.email) ||
+                              getSignalValue(orderData?.email) ||
+                              getSignalValue(actualOrder?.email) ||
+                              order?.email ||
+                              orderData?.order?.email ||
+                              orderData?.email ||
+                              actualOrder?.email;
+      if (orderDirectEmail) {
+        console.log('✅ Email obtenido desde order.email:', orderDirectEmail);
+        return orderDirectEmail;
+      }
+      
+      // CUARTO: Intentar desde purchase (Order Status page)
+      const purchaseCustomer = getSignalValue(purchase?.customer) || getSignalValue(buyerIdentity?.purchase?.customer);
+      const purchaseEmail = purchaseCustomer?.email ||
+                           getSignalValue(purchase?.customer?.email) || 
+                           getSignalValue(buyerIdentity?.purchase?.customer?.email);
+      if (purchaseEmail) {
+        console.log('✅ Email obtenido desde purchase.customer:', purchaseEmail);
+        return purchaseEmail;
+      }
+      
+      // QUINTO: Intentar desde contact (Checkout page - clientes invitados)
+      const contact = getSignalValue(api?.contact);
+      const contactEmail = contact?.email ||
+                          getSignalValue(api?.contact?.email);
+      if (contactEmail) {
+        console.log('✅ Email obtenido desde contact (cliente invitado):', contactEmail);
+        return contactEmail;
+      }
+      
+      // SEXTO: Intentar desde order.contact
+      const orderContact = getSignalValue(order?.contact);
+      const orderContactEmail = orderContact?.email ||
+                               getSignalValue(order?.contact?.email);
+      if (orderContactEmail) {
+        console.log('✅ Email obtenido desde order.contact:', orderContactEmail);
+        return orderContactEmail;
+      }
+      
+      console.warn('⚠️ No se pudo obtener email del cliente desde ninguna fuente');
+      return '';
+    })();
     
     console.log('Customer email sources (OrderStatus):', {
+      orderCustomerEmail: order?.customer?.email,
+      actualOrderCustomerEmail: actualOrder?.customer?.email,
+      orderDataOrderCustomerEmail: orderData?.order?.customer?.email,
+      orderDirectEmail: order?.email,
+      orderDataOrderEmail: orderData?.order?.email,
+      purchaseCustomer: purchase?.customer?.email,
+      buyerIdentityPurchase: buyerIdentity?.purchase?.customer?.email,
       apiContact: api?.contact?.email,
       apiBuyerIdentity: api?.buyerIdentity?.customer?.email,
-      orderDataOrderEmail: orderData?.order?.email,
       orderDataEmail: orderData?.email,
       actualOrderEmail: actualOrder?.email,
-      selected: customerEmail
+      selected: customerEmail,
+      orderKeys: order ? Object.keys(order) : null,
+      orderCustomerKeys: order?.customer ? Object.keys(order.customer) : null
     });
     
     // Obtener nombre y apellido desde múltiples fuentes
-    const firstName = api?.order?.billingAddress?.firstName ||
-                     api?.shippingAddress?.firstName ||
-                     orderData?.order?.billingAddress?.firstName ||
-                     orderData?.order?.shippingAddress?.firstName ||
-                     orderData?.billingAddress?.firstName || 
-                     orderData?.shippingAddress?.firstName ||
-                     actualOrder?.billingAddress?.firstName ||
-                     actualOrder?.shippingAddress?.firstName ||
-                     order?.billingAddress?.firstName ||
-                     order?.shippingAddress?.firstName ||
-                     actualOrder?.customer?.firstName ||
-                     orderData?.customer?.firstName ||
-                     '';
+    // IMPORTANTE: En Shopify Extensions, muchos valores son signals reactivos que necesitan getSignalValue()
+    // Priorizar: buyerIdentity (clientes registrados) > order.customer > purchase.customer > billingAddress > shippingAddress
+    const firstName = (() => {
+      // PRIMERO: Intentar desde buyerIdentity (clientes registrados/logueados)
+      const buyerIdentityCustomer = getSignalValue(api?.buyerIdentity?.customer) || getSignalValue(buyerIdentity?.customer);
+      const buyerIdentityPurchaseCustomer = getSignalValue(buyerIdentity?.purchase?.customer) || getSignalValue(api?.buyerIdentity?.purchase?.customer);
+      
+      const buyerIdentityFirstName = buyerIdentityCustomer?.firstName ||
+                                    buyerIdentityPurchaseCustomer?.firstName ||
+                                    getSignalValue(api?.buyerIdentity?.customer?.firstName) ||
+                                    getSignalValue(buyerIdentity?.purchase?.customer?.firstName);
+      if (buyerIdentityFirstName) {
+        console.log('✅ Nombre obtenido desde buyerIdentity (cliente registrado):', buyerIdentityFirstName);
+        return buyerIdentityFirstName;
+      }
+      
+      // SEGUNDO: Intentar desde order.customer (funciona para registrados e invitados)
+      const orderCustomer = getSignalValue(order?.customer) || 
+                           getSignalValue(actualOrder?.customer) ||
+                           getSignalValue(orderData?.order?.customer) ||
+                           getSignalValue(orderData?.customer);
+      
+      const orderCustomerFirstName = orderCustomer?.firstName ||
+                                    getSignalValue(order?.customer?.firstName) ||
+                                    getSignalValue(actualOrder?.customer?.firstName) ||
+                                    getSignalValue(orderData?.order?.customer?.firstName) ||
+                                    getSignalValue(orderData?.customer?.firstName);
+      if (orderCustomerFirstName) {
+        console.log('✅ Nombre obtenido desde order.customer:', orderCustomerFirstName);
+        return orderCustomerFirstName;
+      }
+      
+      // TERCERO: Intentar desde purchase (Order Status page)
+      const purchaseCustomer = getSignalValue(purchase?.customer) || getSignalValue(buyerIdentity?.purchase?.customer);
+      const purchaseFirstName = purchaseCustomer?.firstName ||
+                               getSignalValue(purchase?.customer?.firstName) || 
+                               getSignalValue(buyerIdentity?.purchase?.customer?.firstName);
+      if (purchaseFirstName) {
+        console.log('✅ Nombre obtenido desde purchase.customer:', purchaseFirstName);
+        return purchaseFirstName;
+      }
+      
+      // CUARTO: Intentar desde billing address (priorizar order.billingAddress)
+      const billingAddress = getSignalValue(order?.billingAddress) || 
+                            getSignalValue(api?.order?.billingAddress) ||
+                            getSignalValue(orderData?.order?.billingAddress) ||
+                            getSignalValue(orderData?.billingAddress) ||
+                            getSignalValue(actualOrder?.billingAddress);
+      
+      const billingFirstName = billingAddress?.firstName ||
+                              billingAddress?.first_name ||
+                              getSignalValue(order?.billingAddress?.firstName) ||
+                              getSignalValue(order?.billingAddress?.first_name) ||
+                              getSignalValue(api?.order?.billingAddress?.firstName);
+      if (billingFirstName) {
+        console.log('✅ Nombre obtenido desde billingAddress:', billingFirstName);
+        return billingFirstName;
+      }
+      
+      // QUINTO: Intentar desde shipping address (priorizar order.shippingAddress)
+      const shippingAddress = getSignalValue(order?.shippingAddress) ||
+                            getSignalValue(api?.shippingAddress) ||
+                            getSignalValue(orderData?.order?.shippingAddress) ||
+                            getSignalValue(orderData?.shippingAddress) ||
+                            getSignalValue(actualOrder?.shippingAddress);
+      
+      const shippingFirstName = shippingAddress?.firstName ||
+                               shippingAddress?.first_name ||
+                               getSignalValue(order?.shippingAddress?.firstName) ||
+                               getSignalValue(order?.shippingAddress?.first_name) ||
+                               getSignalValue(api?.shippingAddress?.firstName);
+      if (shippingFirstName) {
+        console.log('✅ Nombre obtenido desde shippingAddress:', shippingFirstName);
+        return shippingFirstName;
+      }
+      
+      console.warn('⚠️ No se pudo obtener nombre del cliente desde ninguna fuente');
+      return '';
+    })();
     
-    const lastName = api?.order?.billingAddress?.lastName ||
-                    api?.shippingAddress?.lastName ||
-                    orderData?.order?.billingAddress?.lastName ||
-                    orderData?.order?.shippingAddress?.lastName ||
-                    orderData?.billingAddress?.lastName || 
-                    orderData?.shippingAddress?.lastName ||
-                    actualOrder?.billingAddress?.lastName ||
-                    actualOrder?.shippingAddress?.lastName ||
-                    order?.billingAddress?.lastName ||
-                    order?.shippingAddress?.lastName ||
-                    actualOrder?.customer?.lastName ||
-                    orderData?.customer?.lastName ||
-                     '';
+    const lastName = (() => {
+      // PRIMERO: Intentar desde buyerIdentity (clientes registrados/logueados)
+      const buyerIdentityCustomer = getSignalValue(api?.buyerIdentity?.customer) || getSignalValue(buyerIdentity?.customer);
+      const buyerIdentityPurchaseCustomer = getSignalValue(buyerIdentity?.purchase?.customer) || getSignalValue(api?.buyerIdentity?.purchase?.customer);
+      
+      const buyerIdentityLastName = buyerIdentityCustomer?.lastName ||
+                                   buyerIdentityPurchaseCustomer?.lastName ||
+                                   getSignalValue(api?.buyerIdentity?.customer?.lastName) ||
+                                   getSignalValue(buyerIdentity?.purchase?.customer?.lastName);
+      if (buyerIdentityLastName) {
+        console.log('✅ Apellido obtenido desde buyerIdentity (cliente registrado):', buyerIdentityLastName);
+        return buyerIdentityLastName;
+      }
+      
+      // SEGUNDO: Intentar desde order.customer (funciona para registrados e invitados)
+      const orderCustomer = getSignalValue(order?.customer) || 
+                           getSignalValue(actualOrder?.customer) ||
+                           getSignalValue(orderData?.order?.customer) ||
+                           getSignalValue(orderData?.customer);
+      
+      const orderCustomerLastName = orderCustomer?.lastName ||
+                                   getSignalValue(order?.customer?.lastName) ||
+                                   getSignalValue(actualOrder?.customer?.lastName) ||
+                                   getSignalValue(orderData?.order?.customer?.lastName) ||
+                                   getSignalValue(orderData?.customer?.lastName);
+      if (orderCustomerLastName) {
+        console.log('✅ Apellido obtenido desde order.customer:', orderCustomerLastName);
+        return orderCustomerLastName;
+      }
+      
+      // TERCERO: Intentar desde purchase (Order Status page)
+      const purchaseCustomer = getSignalValue(purchase?.customer) || getSignalValue(buyerIdentity?.purchase?.customer);
+      const purchaseLastName = purchaseCustomer?.lastName ||
+                              getSignalValue(purchase?.customer?.lastName) || 
+                              getSignalValue(buyerIdentity?.purchase?.customer?.lastName);
+      if (purchaseLastName) {
+        console.log('✅ Apellido obtenido desde purchase.customer:', purchaseLastName);
+        return purchaseLastName;
+      }
+      
+      // CUARTO: Intentar desde billing address (priorizar order.billingAddress)
+      const billingAddress = getSignalValue(order?.billingAddress) || 
+                            getSignalValue(api?.order?.billingAddress) ||
+                            getSignalValue(orderData?.order?.billingAddress) ||
+                            getSignalValue(orderData?.billingAddress) ||
+                            getSignalValue(actualOrder?.billingAddress);
+      
+      const billingLastName = billingAddress?.lastName ||
+                             billingAddress?.last_name ||
+                             getSignalValue(order?.billingAddress?.lastName) ||
+                             getSignalValue(order?.billingAddress?.last_name) ||
+                             getSignalValue(api?.order?.billingAddress?.lastName);
+      if (billingLastName) {
+        console.log('✅ Apellido obtenido desde billingAddress:', billingLastName);
+        return billingLastName;
+      }
+      
+      // QUINTO: Intentar desde shipping address (priorizar order.shippingAddress)
+      const shippingAddress = getSignalValue(order?.shippingAddress) ||
+                             getSignalValue(api?.shippingAddress) ||
+                             getSignalValue(orderData?.order?.shippingAddress) ||
+                             getSignalValue(orderData?.shippingAddress) ||
+                             getSignalValue(actualOrder?.shippingAddress);
+      
+      const shippingLastName = shippingAddress?.lastName ||
+                              shippingAddress?.last_name ||
+                              getSignalValue(order?.shippingAddress?.lastName) ||
+                              getSignalValue(order?.shippingAddress?.last_name) ||
+                              getSignalValue(api?.shippingAddress?.lastName);
+      if (shippingLastName) {
+        console.log('✅ Apellido obtenido desde shippingAddress:', shippingLastName);
+        return shippingLastName;
+      }
+      
+      console.warn('⚠️ No se pudo obtener apellido del cliente desde ninguna fuente');
+      return '';
+    })();
     
     console.log('Customer name sources (OrderStatus):', {
+      orderCustomerFirstName: order?.customer?.firstName,
+      orderCustomerLastName: order?.customer?.lastName,
+      actualOrderCustomerFirstName: actualOrder?.customer?.firstName,
+      actualOrderCustomerLastName: actualOrder?.customer?.lastName,
+      orderBillingFirstName: order?.billingAddress?.firstName,
+      orderBillingLastName: order?.billingAddress?.lastName,
+      orderShippingFirstName: order?.shippingAddress?.firstName,
+      orderShippingLastName: order?.shippingAddress?.lastName,
+      purchaseCustomerFirstName: purchase?.customer?.firstName,
+      purchaseCustomerLastName: purchase?.customer?.lastName,
+      buyerIdentityPurchaseFirstName: buyerIdentity?.purchase?.customer?.firstName,
+      buyerIdentityPurchaseLastName: buyerIdentity?.purchase?.customer?.lastName,
+      apiBillingFirstName: api?.order?.billingAddress?.firstName,
+      apiBillingLastName: api?.order?.billingAddress?.lastName,
+      apiShippingFirstName: api?.shippingAddress?.firstName,
+      apiShippingLastName: api?.shippingAddress?.lastName,
       firstName,
       lastName,
-      orderDataKeys: orderData ? Object.keys(orderData) : null,
-      actualOrderKeys: actualOrder ? Object.keys(actualOrder) : null
+      orderKeys: order ? Object.keys(order) : null,
+      orderCustomerKeys: order?.customer ? Object.keys(order.customer) : null,
+      orderBillingKeys: order?.billingAddress ? Object.keys(order.billingAddress) : null,
+      orderShippingKeys: order?.shippingAddress ? Object.keys(order.shippingAddress) : null
     });
     
     // Construir array de items desde los line items de la orden
@@ -757,7 +1125,81 @@ function QhantuPaymentValidatorOrderStatus() {
       }
     }
     
-    console.log('Final items to send (OrderStatus):', items);
+    // Calcular la suma de los items de productos
+    const itemsTotal = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    
+    // Obtener envío e impuestos por separado desde cost
+    let shippingAmount = 0;
+    let taxAmount = 0;
+    
+    // Intentar obtener shipping desde cost.totalShippingAmount
+    if (cost?.totalShippingAmount) {
+      const shippingValue = getSignalValue(cost.totalShippingAmount);
+      if (typeof shippingValue === 'object' && shippingValue !== null) {
+        shippingAmount = parseFloat(shippingValue.amount || shippingValue.value || 0);
+      } else if (typeof shippingValue === 'string' || typeof shippingValue === 'number') {
+        shippingAmount = parseFloat(shippingValue) || 0;
+      }
+    }
+    
+    // Intentar obtener taxes desde cost.totalTaxAmount
+    if (cost?.totalTaxAmount) {
+      const taxValue = getSignalValue(cost.totalTaxAmount);
+      if (typeof taxValue === 'object' && taxValue !== null) {
+        taxAmount = parseFloat(taxValue.amount || taxValue.value || 0);
+      } else if (typeof taxValue === 'string' || typeof taxValue === 'number') {
+        taxAmount = parseFloat(taxValue) || 0;
+      }
+    }
+    
+    // Si no se pudieron obtener por separado, calcular la diferencia como fallback
+    if (shippingAmount === 0 && taxAmount === 0) {
+      let orderTotal = 0;
+      if (amountFinal) {
+        orderTotal = typeof amountFinal === 'string' ? parseFloat(amountFinal) : amountFinal;
+      } else if (amountValue) {
+        orderTotal = typeof amountValue === 'string' ? parseFloat(amountValue) : amountValue;
+      }
+      const difference = orderTotal - itemsTotal;
+      
+      // Si hay diferencia, asumir que es envío (los impuestos suelen estar incluidos en el subtotal)
+      if (difference > 0.01) {
+        shippingAmount = parseFloat(difference.toFixed(2));
+        console.log('⚠️ No se encontraron shipping/tax separados, usando diferencia como envío (OrderStatus):', shippingAmount);
+      }
+    }
+    
+    console.log('📊 Cálculo de totales (separados) (OrderStatus):', {
+      itemsTotal: itemsTotal.toFixed(2),
+      shippingAmount: shippingAmount.toFixed(2),
+      taxAmount: taxAmount.toFixed(2),
+      total: (itemsTotal + shippingAmount + taxAmount).toFixed(2),
+      itemsCount: items.length
+    });
+    
+    // Agregar envío como item separado si existe
+    if (shippingAmount > 0.01) {
+      const shippingItem = {
+        name: 'Envío',
+        quantity: 1,
+        price: parseFloat(shippingAmount.toFixed(2))
+      };
+      items.push(shippingItem);
+      console.log('✅ Agregado item de envío (OrderStatus):', shippingItem);
+    }
+    
+    // Agregar impuestos como item separado si existen
+    if (taxAmount > 0.01) {
+      const taxItem = {
+        name: 'Impuestos',
+        quantity: 1,
+        price: parseFloat(taxAmount.toFixed(2))
+      };
+      items.push(taxItem);
+      console.log('✅ Agregado item de impuestos (OrderStatus):', taxItem);
+    }
+    
+    console.log('Final items to send (con envío) (OrderStatus):', items);
     
     // Formatear internal_code según la documentación: "SHOPIFY-ORDER-#{number}"
     // Priorizar number sobre id para mantener consistencia entre ThankYou y OrderStatus
@@ -780,11 +1222,32 @@ function QhantuPaymentValidatorOrderStatus() {
         };
       }
       
+      // VALIDACIÓN: No usar valores dummy si no tenemos datos reales
+      // Si no tenemos email real, no crear checkout (es requerido)
+      if (!customerEmail || customerEmail === 'cliente@tienda.com') {
+        console.error('❌ No se pudo obtener el email del cliente. No se puede crear checkout.');
+        console.error('   Fuentes consultadas:', {
+          orderCustomerEmail: order?.customer?.email,
+          orderDirectEmail: order?.email,
+          actualOrderCustomerEmail: actualOrder?.customer?.email,
+          purchaseCustomer: purchase?.customer?.email,
+          apiContact: api?.contact?.email
+        });
+        return {
+          process: false,
+          message: 'Error: No se pudo obtener el email del cliente desde Shopify. Por favor contacta a soporte.'
+        };
+      }
+      
+      // Si no tenemos nombre, usar email como fallback (mejor que "Cliente")
+      const finalFirstName = firstName || customerEmail.split('@')[0] || 'Cliente';
+      const finalLastName = lastName || '';
+      
       const requestBody = {
         appkey: appkey,
-        customer_email: customerEmail || 'cliente@tienda.com', // Fallback si no hay email
-        customer_first_name: firstName || 'Cliente', // Fallback si no hay nombre
-        customer_last_name: lastName || '', // Puede estar vacío
+        customer_email: customerEmail, // Ya validado arriba
+        customer_first_name: finalFirstName,
+        customer_last_name: finalLastName,
         currency_code: currencyCode,
         internal_code: formattedInternalCode,
         payment_method: 'QRSIMPLE',
@@ -805,6 +1268,51 @@ function QhantuPaymentValidatorOrderStatus() {
       console.log('     - order?.currency:', order?.currency);
       console.log('   ✅ Moneda final enviada:', currencyCode);
       
+      // 🔍 LOGGING: Confirmar datos del cliente que se envían a Qhantuy
+      console.log('🔍 DATOS DEL CLIENTE ENVIADOS A QHANTUY (OrderStatus):');
+      console.log('   customer_email:', requestBody.customer_email);
+      console.log('   customer_first_name:', requestBody.customer_first_name);
+      console.log('   customer_last_name:', requestBody.customer_last_name);
+      console.log('   Fuentes consultadas:');
+      console.log('     - Email desde:', {
+        orderCustomerEmail: order?.customer?.email,
+        orderDirectEmail: order?.email,
+        actualOrderCustomerEmail: actualOrder?.customer?.email,
+        purchaseCustomer: purchase?.customer?.email,
+        buyerIdentityPurchase: buyerIdentity?.purchase?.customer?.email,
+        apiContact: api?.contact?.email,
+        apiBuyerIdentity: api?.buyerIdentity?.customer?.email,
+        orderDataOrderEmail: orderData?.order?.email,
+        actualOrderEmail: actualOrder?.email,
+        selected: customerEmail
+      });
+      console.log('     - Nombre desde:', {
+        orderCustomerFirstName: order?.customer?.firstName,
+        orderBillingFirstName: order?.billingAddress?.firstName,
+        orderShippingFirstName: order?.shippingAddress?.firstName,
+        actualOrderCustomerFirstName: actualOrder?.customer?.firstName,
+        purchaseCustomer: purchase?.customer?.firstName,
+        buyerIdentityPurchase: buyerIdentity?.purchase?.customer?.firstName,
+        apiBilling: api?.order?.billingAddress?.firstName,
+        apiShipping: api?.shippingAddress?.firstName,
+        orderDataBilling: orderData?.order?.billingAddress?.firstName,
+        actualOrderBilling: actualOrder?.billingAddress?.firstName,
+        selected: firstName
+      });
+      console.log('     - Apellido desde:', {
+        orderCustomerLastName: order?.customer?.lastName,
+        orderBillingLastName: order?.billingAddress?.lastName,
+        orderShippingLastName: order?.shippingAddress?.lastName,
+        actualOrderCustomerLastName: actualOrder?.customer?.lastName,
+        purchaseCustomer: purchase?.customer?.lastName,
+        buyerIdentityPurchase: buyerIdentity?.purchase?.customer?.lastName,
+        apiBilling: api?.order?.billingAddress?.lastName,
+        apiShipping: api?.shippingAddress?.lastName,
+        orderDataBilling: orderData?.order?.billingAddress?.lastName,
+        actualOrderBilling: actualOrder?.billingAddress?.lastName,
+        selected: lastName
+      });
+      
       console.log('Request body validation (OrderStatus):', {
         hasItems: requestBody.items.length > 0,
         itemsValid: requestBody.items.every(item => item.name && item.quantity && item.price > 0),
@@ -812,22 +1320,44 @@ function QhantuPaymentValidatorOrderStatus() {
         hasFirstName: !!requestBody.customer_first_name
       });
 
-      console.log('Creating Qhantuy checkout with:', requestBody);
-      console.log('Making request to:', `${apiUrl}/v2/checkout`);
+      console.log('Creating Qhantuy checkout via backend proxy (OrderStatus)');
+      console.log('Request body:', requestBody);
       console.log('Request started at:', new Date().toISOString());
+
+      // IMPORTANTE: Usar el backend como proxy para evitar problemas de CORS
+      // El backend hará la llamada a Qhantuy
+      const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+      const proxyUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/create-checkout`;
 
       // Crear un AbortController para timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 segundos timeout
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout (más tiempo porque pasa por el backend)
 
       try {
-        const response = await fetch(`${apiUrl}/v2/checkout`, {
+        // Llamar al endpoint del backend que hará proxy a Qhantuy
+        const response = await fetch(proxyUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'X-API-Token': apiToken
+            'Content-Type': 'application/json'
           },
-          body: JSON.stringify(requestBody),
+          body: JSON.stringify({
+            // Incluir credenciales de Qhantuy para que el backend las use
+            qhantuy_api_url: apiUrl,
+            qhantuy_api_token: apiToken,
+            appkey: appkey,
+            // Datos del checkout
+            customer_email: requestBody.customer_email,
+            customer_first_name: requestBody.customer_first_name,
+            customer_last_name: requestBody.customer_last_name,
+            currency_code: requestBody.currency_code,
+            internal_code: requestBody.internal_code,
+            payment_method: requestBody.payment_method,
+            image_method: requestBody.image_method,
+            detail: requestBody.detail,
+            callback_url: requestBody.callback_url,
+            return_url: requestBody.return_url,
+            items: requestBody.items
+          }),
           signal: controller.signal
         });
 
@@ -839,30 +1369,61 @@ function QhantuPaymentValidatorOrderStatus() {
           const errorText = await response.text();
           console.error('HTTP error:', response.status, response.statusText);
           console.error('Error response body:', errorText);
+          
+          let errorData;
+          try {
+            errorData = JSON.parse(errorText);
+          } catch {
+            errorData = { message: errorText };
+          }
+          
           return {
             process: false,
-            message: `Error HTTP: ${response.status} ${response.statusText}`
+            message: errorData.message || `Error HTTP: ${response.status} ${response.statusText}`
           };
         }
 
         const data = await response.json();
-        console.log('✅ Qhantuy response received (OrderStatus):', data);
+        console.log('✅ Qhantuy response received via proxy (OrderStatus):', data);
         console.log('Response process:', data?.process);
         console.log('Response transaction_id:', data?.transaction_id);
         console.log('Response transaction_id type:', typeof data?.transaction_id);
         console.log('Response transaction_id cleaned:', data?.transaction_id ? String(data.transaction_id).trim() : 'N/A');
         
-        return data;
+        // El backend retorna { success: true, ...responseData }
+        // Si tiene success: false, retornar el error
+        if (data.success === false || data.process === false) {
+          return {
+            process: false,
+            message: data.message || 'Error al crear el checkout en Qhantuy'
+          };
+        }
+        
+        // Retornar los datos de Qhantuy (sin el wrapper success)
+        return {
+          process: data.process,
+          message: data.message,
+          transaction_id: data.transaction_id,
+          checkout_amount: data.checkout_amount,
+          checkout_currency: data.checkout_currency,
+          image_data: data.image_data,
+          payment_status: data.payment_status,
+          ...data // Incluir cualquier otro campo que Qhantuy retorne
+        };
       } catch (fetchError) {
         clearTimeout(timeoutId);
         if (fetchError.name === 'AbortError') {
-          console.error('Request timeout: La API no respondió en 15 segundos');
+          console.error('Request timeout: El backend no respondió en 30 segundos');
           return {
             process: false,
-            message: 'Error: La API no respondió a tiempo. Por favor intenta de nuevo.'
+            message: 'Error: El servidor no respondió a tiempo. Por favor intenta de nuevo.'
           };
         }
-        throw fetchError; // Re-lanzar otros errores
+        console.error('Fetch error:', fetchError);
+        return {
+          process: false,
+          message: `Error de conexión: ${fetchError.message || 'No se pudo conectar con el servidor'}`
+        };
       }
     } catch (error) {
       console.error('Error creating Qhantuy checkout:', error);
@@ -972,13 +1533,15 @@ function QhantuPaymentValidatorOrderStatus() {
         }
       }
       
-      // Verificar si ya existe un transaction_id guardado ANTES de crear uno nuevo
+      // PASO 1: Verificar si ya existe un transaction_id guardado
+      // En Order Status, debemos usar check-debt en lugar de crear un nuevo checkout
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
       
       console.log('Storage check (OrderStatus):', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
       
+      // Si el pago ya fue exitoso, restaurar desde storage
       if (savedStatus === 'success') {
         console.log('✅ Payment already successful, restoring from storage (OrderStatus)...');
         setPaymentStatus('success');
@@ -989,25 +1552,56 @@ function QhantuPaymentValidatorOrderStatus() {
         return;
       }
       
-      if (savedTxId && savedQr) {
-        console.log('✅ Restored checkout from storage (OrderStatus):', savedTxId);
-        setTransactionId(savedTxId);
-        setQrData(savedQr);
-        setPaymentStatus('pending');
-        isInitializingRef.current = false;
-        isCreatingCheckoutRef.current = false;
-        return;
+      // PASO 2: Si tenemos transaction_id, usar check-debt para obtener el estado actual
+      let existingTxId = savedTxId || transactionId;
+      
+      if (existingTxId) {
+        console.log('🔍 Found existing transaction_id (OrderStatus):', existingTxId);
+        console.log('   Using check-debt to get current payment status...');
+        
+        const debtStatus = await checkExistingPayment(existingTxId);
+        
+        if (debtStatus) {
+          console.log('✅ Payment status retrieved from check-debt (OrderStatus):', debtStatus.payment_status);
+          
+          setTransactionId(debtStatus.transaction_id);
+          
+          // Si hay QR disponible, usarlo
+          if (debtStatus.qr_image) {
+            setQrData(debtStatus.qr_image);
+            await storage.write('qr_image', debtStatus.qr_image);
+          } else if (savedQr) {
+            setQrData(savedQr);
+          }
+          
+          // Actualizar estado según el payment_status
+          const paymentStatusValue = debtStatus.payment_status;
+          if (paymentStatusValue === 'success' || paymentStatusValue === 'paid') {
+            setPaymentStatus('success');
+            await storage.write('payment_status', 'success');
+          } else if (paymentStatusValue === 'rejected' || paymentStatusValue === 'failed') {
+            setPaymentStatus('rejected');
+            setErrorMessage('El pago fue rechazado. Por favor intenta de nuevo.');
+          } else {
+            // pending, holding, etc.
+            setPaymentStatus('pending');
+          }
+          
+          // Guardar transaction_id en storage si no estaba
+          if (!savedTxId) {
+            await storage.write('transaction_id', existingTxId);
+          }
+          
+          isInitializingRef.current = false;
+          isCreatingCheckoutRef.current = false;
+          return;
+        } else {
+          console.warn('⚠️ Could not retrieve payment status from check-debt. Transaction ID may be invalid.');
+          // Continuar para crear un nuevo checkout si no se pudo obtener el estado
+        }
       }
-
-      // Verificar estado actual ANTES de crear checkout
-      // Si ya tenemos un transaction_id en el estado, no crear otro
-      if (transactionId) {
-        console.log('⚠️ Transaction ID already exists in state (OrderStatus):', transactionId, '- Skipping checkout creation');
-        isInitializingRef.current = false;
-        isCreatingCheckoutRef.current = false;
-        return;
-      }
-
+      
+      // PASO 3: Si no hay transaction_id o no se pudo obtener el estado, crear nuevo checkout
       // Verificar que no estemos en un estado que ya tenga checkout
       if (paymentStatus !== 'initializing' && paymentStatus !== 'error') {
         console.log('⚠️ Payment status is not initializing (OrderStatus):', paymentStatus, '- Skipping checkout creation');
@@ -1018,7 +1612,7 @@ function QhantuPaymentValidatorOrderStatus() {
 
       // MARCADOR: Estamos creando checkout ahora
       isCreatingCheckoutRef.current = true;
-      console.log('🔐 Lock acquired (OrderStatus): Creating checkout...');
+      console.log('🔐 Lock acquired (OrderStatus): Creating new checkout...');
 
       // Verificar si tenemos los datos necesarios
       if (!hasRequiredOrderData()) {
@@ -1214,12 +1808,20 @@ function QhantuPaymentValidatorOrderStatus() {
                 const saveData = await saveResponse.json();
                 if (saveData.success) {
                   console.log('✅ Transaction ID saved to Shopify successfully (OrderStatus):', cleanTransactionId);
+                  console.log('   Order ID:', primaryIdentifier);
+                  console.log('   Shop Domain:', shopDomain);
                 } else {
-                  console.warn('⚠️ Failed to save transaction ID (OrderStatus):', saveData.message);
+                  console.error('❌ Failed to save transaction ID (OrderStatus):', saveData.message);
+                  console.error('   Response:', saveData);
+                  console.error('   Order ID:', primaryIdentifier);
+                  console.error('   Shop Domain:', shopDomain);
                 }
               } else {
                 const errorText = await saveResponse.text();
-                console.warn('⚠️ Error saving transaction ID to Shopify (OrderStatus):', saveResponse.status, errorText);
+                console.error('❌ Error saving transaction ID to Shopify (OrderStatus):', saveResponse.status, errorText);
+                console.error('   Order ID:', primaryIdentifier);
+                console.error('   Shop Domain:', shopDomain);
+                console.error('   Transaction ID:', cleanTransactionId);
               }
             } else {
               console.warn('⚠️ Cannot save transaction ID (OrderStatus): missing order ID or number');
@@ -1300,9 +1902,12 @@ function QhantuPaymentValidatorOrderStatus() {
         // Los datos ya están disponibles, la función attemptCheckoutCreation 
         // se ejecutará automáticamente en el siguiente retry o si el timeout aún está activo
         // Pero para asegurarnos, podemos forzar una ejecución inmediata si no hay retry activo
-        if (!retryTimeoutRef.current) {
-          console.log('No retry active, attempting checkout creation immediately...');
+        // IMPORTANTE: Solo si no estamos creando un checkout ya
+        if (!retryTimeoutRef.current && !isCreatingCheckoutRef.current) {
+          console.log('No retry active and no checkout in progress, attempting checkout creation immediately...');
           attemptCheckoutCreation();
+        } else if (isCreatingCheckoutRef.current) {
+          console.log('⚠️ Checkout creation already in progress, skipping duplicate call');
         }
       } else {
         console.log('Already initializing and still waiting for data, skipping...');
@@ -1904,16 +2509,19 @@ function QhantuPaymentValidatorOrderStatus() {
       
       {/* Estado: Éxito */}
       {paymentStatus === 'success' && (
-        <Banner status="success">
-          <BlockStack spacing="tight">
-            <Text emphasis="bold">✅ ¡Pago Confirmado!</Text>
-            <Text>Tu pago ha sido verificado exitosamente.</Text>
-            <Text size="small">Número de orden: {orderNumber}</Text>
-            {transactionId && (
-              <Text size="small">Transacción: {transactionId}</Text>
-            )}
-          </BlockStack>
-        </Banner>
+        <BlockStack spacing="base" inlineAlignment="center">
+          <SuccessCheckMark size={100} stroke={6} />
+          <Banner status="success">
+            <BlockStack spacing="tight">
+              <Text emphasis="bold">¡Pago Confirmado!</Text>
+              <Text>Tu pago ha sido verificado exitosamente.</Text>
+              <Text size="small">Número de orden: {orderNumber}</Text>
+              {transactionId && (
+                <Text size="small">Transacción: {transactionId}</Text>
+              )}
+            </BlockStack>
+          </Banner>
+        </BlockStack>
       )}
       
       {/* Estado: Error o Rechazado */}
