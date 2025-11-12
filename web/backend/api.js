@@ -204,8 +204,43 @@ export async function handleQhantuCallback(req, res) {
     if (!shopDomain && internal_code) {
       console.log('⚠️  Shop domain not provided in callback. Attempting to find shop from internal_code...');
       // Extract order number from internal_code
-      const orderNumber = internal_code.replace('SHOPIFY-ORDER-', '');
-      console.log('🔍 Order number from internal_code:', orderNumber);
+      // Validar que el internal_code tenga el formato esperado
+      let orderNumber;
+      if (internal_code && typeof internal_code === 'string') {
+        if (internal_code.startsWith('SHOPIFY-ORDER-')) {
+          orderNumber = internal_code.replace('SHOPIFY-ORDER-', '').trim();
+          // Validar que el orderNumber sea numérico o alfanumérico válido
+          if (!orderNumber || orderNumber.length === 0) {
+            console.error('❌ Invalid internal_code format: order number is empty after removing prefix');
+            return res.status(400).json({
+              success: false,
+              message: 'Invalid internal_code format: order number is empty'
+            });
+          }
+          console.log('🔍 Order number from internal_code:', orderNumber);
+        } else {
+          // Si no tiene el prefijo, intentar usar el internal_code directamente
+          // pero validar que sea un formato válido
+          orderNumber = internal_code.trim();
+          console.log('⚠️ internal_code does not have SHOPIFY-ORDER- prefix, using as-is:', orderNumber);
+          
+          // Si el internal_code no tiene el formato esperado, puede ser un error
+          // Pero intentamos continuar si parece ser un número de orden válido
+          if (orderNumber.length === 0 || orderNumber.includes('Ø') || orderNumber.match(/[^A-Z0-9-]/i)) {
+            console.error('❌ Invalid internal_code format:', internal_code);
+            return res.status(400).json({
+              success: false,
+              message: `Invalid internal_code format: "${internal_code}". Expected format: SHOPIFY-ORDER-{number}`
+            });
+          }
+        }
+      } else {
+        console.error('❌ Invalid internal_code: not a string or empty');
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid internal_code: must be a non-empty string'
+        });
+      }
       
       // Note: We can't easily determine shop from order number without trying all shops
       // For now, return error asking for shop domain
