@@ -516,7 +516,9 @@ function QhantuPaymentValidatorOrderStatus() {
           body: JSON.stringify({
             transaction_id: txId,
             internal_code: internalCode,
-            qhantuy_api_url: apiUrl
+            qhantuy_api_url: apiUrl,
+            qhantuy_api_token: apiToken,  // IMPORTANTE: Enviar API Token desde settings de la extensión
+            appkey: appkey  // IMPORTANTE: Enviar AppKey desde settings de la extensión
           }),
           signal: controller.signal
         });
@@ -1323,6 +1325,13 @@ function QhantuPaymentValidatorOrderStatus() {
       console.log('Creating Qhantuy checkout via backend proxy (OrderStatus)');
       console.log('Request body:', requestBody);
       console.log('Request started at:', new Date().toISOString());
+      
+      // 🔍 LOGGING: Confirmar credenciales que se envían al backend
+      console.log('🔍 CREDENCIALES ENVIADAS AL BACKEND (OrderStatus):');
+      console.log('   qhantuy_api_url:', apiUrl);
+      console.log('   qhantuy_api_token:', apiToken ? `${apiToken.substring(0, 10)}...` : '(vacío)');
+      console.log('   appkey:', appkey ? `${appkey.substring(0, 10)}...` : '(vacío)');
+      console.log('   Fuente: Settings de la extensión (customize checkout)');
 
       // IMPORTANTE: Usar el backend como proxy para evitar problemas de CORS
       // El backend hará la llamada a Qhantuy
@@ -1481,10 +1490,16 @@ function QhantuPaymentValidatorOrderStatus() {
   // Función para intentar crear el checkout
   const attemptCheckoutCreation = useCallback(async () => {
     // PREVENIR CREACIÓN DUPLICADA: Si ya estamos creando un checkout, salir inmediatamente
+    // ESTE CHECK DEBE SER LO PRIMERO EN LA FUNCIÓN
     if (isCreatingCheckoutRef.current) {
-      console.log('⚠️ Checkout creation already in progress (OrderStatus), skipping duplicate call');
+      console.log('🚫 BLOCKED: Checkout creation already in progress (OrderStatus), skipping duplicate call');
+      console.log('   Stack trace:', new Error().stack);
       return;
     }
+    
+    // ESTABLECER EL LOCK INMEDIATAMENTE para prevenir llamadas concurrentes
+    isCreatingCheckoutRef.current = true;
+    console.log('🔐 LOCK ACQUIRED: Starting checkout creation (OrderStatus)...');
 
     // Limpiar timeouts anteriores si existen
     if (retryTimeoutRef.current) {
@@ -1725,6 +1740,9 @@ function QhantuPaymentValidatorOrderStatus() {
           setTransactionId(cleanedFinalCheck);
           const existingQr = await storage.read('qr_image');
           if (existingQr) setQrData(existingQr);
+          // No guardar en Shopify si ya existe uno diferente (evitar duplicados)
+          setPaymentStatus('pending');
+          console.log('✅ Payment initialized successfully (OrderStatus) - using existing transaction');
         } else {
           // Guardar el nuevo checkout con transaction_id limpio
           console.log('✅ Saving new checkout with transaction_id (OrderStatus):', cleanTransactionId);
@@ -1737,7 +1755,8 @@ function QhantuPaymentValidatorOrderStatus() {
           
           console.log('✅ Transaction ID saved to storage (OrderStatus):', cleanTransactionId);
           
-          // Guardar Transaction ID en Shopify como nota del pedido y en timeline
+          // IMPORTANTE: Guardar Transaction ID en Shopify INMEDIATAMENTE después de recibir el QR
+          // Esto debe hacerse antes de cambiar el estado a 'pending' para que la nota aparezca justo después del QR
           try {
             const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
             // IMPORTANTE: shop.domain es el dominio real de la tienda (ej: joyeriaimperio.myshopify.com)
@@ -1829,11 +1848,15 @@ function QhantuPaymentValidatorOrderStatus() {
           } catch (error) {
             console.error('❌ Error saving transaction ID to Shopify (OrderStatus):', error);
             // No bloquear el flujo si falla, pero loguear el error
+            // La nota se puede agregar más tarde si es necesario
           }
+          
+          // IMPORTANTE: Cambiar el estado a 'pending' DESPUÉS de guardar la nota en Shopify
+          // Esto asegura que la nota aparezca justo después de recibir el QR
+          setPaymentStatus('pending');
+          console.log('✅ Payment initialized successfully (OrderStatus)');
         }
         
-        setPaymentStatus('pending');
-        console.log('✅ Payment initialized successfully (OrderStatus)');
         retryAttemptRef.current = 0; // Reset retry count on success
         isInitializingRef.current = false;
         isCreatingCheckoutRef.current = false; // Liberar el lock
@@ -1863,8 +1886,16 @@ function QhantuPaymentValidatorOrderStatus() {
       hasTotalAmount: !!totalAmount,
       missingConfig,
       paymentStatus,
-      retryAttempt: retryAttemptRef.current
+      retryAttempt: retryAttemptRef.current,
+      isInitializing: isInitializingRef.current,
+      isCreatingCheckout: isCreatingCheckoutRef.current
     });
+    
+    // PREVENCIÓN CRÍTICA: Si ya estamos creando un checkout, NO hacer nada
+    if (isCreatingCheckoutRef.current) {
+      console.log('🚫 BLOCKED: Checkout creation already in progress, skipping entire effect');
+      return;
+    }
     
     // Limpiar timeouts cuando el componente se desmonta o cambian las dependencias
     const cleanup = () => {
@@ -1901,13 +1932,12 @@ function QhantuPaymentValidatorOrderStatus() {
         console.log('Already initializing but data is now available, continuing...');
         // Los datos ya están disponibles, la función attemptCheckoutCreation 
         // se ejecutará automáticamente en el siguiente retry o si el timeout aún está activo
-        // Pero para asegurarnos, podemos forzar una ejecución inmediata si no hay retry activo
-        // IMPORTANTE: Solo si no estamos creando un checkout ya
-        if (!retryTimeoutRef.current && !isCreatingCheckoutRef.current) {
-          console.log('No retry active and no checkout in progress, attempting checkout creation immediately...');
-          attemptCheckoutCreation();
-        } else if (isCreatingCheckoutRef.current) {
+        // IMPORTANTE: NO forzar ejecución aquí para evitar duplicados
+        // El retry mechanism se encargará de ejecutar cuando sea necesario
+        if (isCreatingCheckoutRef.current) {
           console.log('⚠️ Checkout creation already in progress, skipping duplicate call');
+        } else if (!retryTimeoutRef.current) {
+          console.log('⚠️ No retry active but already initializing - this should not happen');
         }
       } else {
         console.log('Already initializing and still waiting for data, skipping...');
@@ -1915,7 +1945,15 @@ function QhantuPaymentValidatorOrderStatus() {
       return cleanup;
     }
 
+    // PREVENCIÓN: Establecer flag ANTES de cualquier operación async
+    // Esto previene que múltiples ejecuciones del useEffect pasen este punto
+    if (isInitializingRef.current) {
+      console.log('🚫 BLOCKED: Already initializing, skipping duplicate initialization');
+      return cleanup;
+    }
+
     // Iniciar proceso de inicialización
+    console.log('🔒 ACQUIRING INIT LOCK: Starting initialization...');
     isInitializingRef.current = true;
     startTimeRef.current = Date.now();
     retryAttemptRef.current = 0;
@@ -1935,12 +1973,18 @@ function QhantuPaymentValidatorOrderStatus() {
     if (hasData) {
       console.log('Data available immediately, starting checkout creation...');
       // Ejecutar inmediatamente si tenemos datos
+      // IMPORTANTE: attemptCheckoutCreation establecerá isCreatingCheckoutRef
       attemptCheckoutCreation();
     } else {
       console.log('Data not yet available, waiting 100ms before first attempt...');
       // Pequeño delay si no tenemos datos todavía
       const initialDelay = setTimeout(() => {
-        attemptCheckoutCreation();
+        // Verificar nuevamente antes de ejecutar
+        if (!isCreatingCheckoutRef.current) {
+          attemptCheckoutCreation();
+        } else {
+          console.log('🚫 BLOCKED: Checkout creation started during delay, skipping');
+        }
       }, 100);
       
       return () => {
@@ -2108,7 +2152,9 @@ function QhantuPaymentValidatorOrderStatus() {
         },
         body: JSON.stringify({
           transaction_id: cleanTxId,  // Enviar transaction_id directamente según documentación
-          qhantuy_api_url: apiUrl  // Enviar URL de Qhantuy desde settings de la extensión
+          qhantuy_api_url: apiUrl,  // Enviar URL de Qhantuy desde settings de la extensión
+          qhantuy_api_token: apiToken,  // IMPORTANTE: Enviar API Token desde settings de la extensión
+          appkey: appkey  // IMPORTANTE: Enviar AppKey desde settings de la extensión
         })
       });
 
@@ -2124,9 +2170,25 @@ function QhantuPaymentValidatorOrderStatus() {
       console.log('Backend response (OrderStatus):', backendResponse);
       
       // El backend envuelve la respuesta de Qhantuy en { success: true, data: ... }
-      if (!backendResponse.success || !backendResponse.data) {
+      if (!backendResponse.success) {
         console.error('Backend returned error en check-debt (OrderStatus):', backendResponse.message || 'Unknown error');
-        setErrorMessage(backendResponse.message || 'Error al verificar el pago');
+        
+        // Si es un error de Qhantuy, mostrar el mensaje específico
+        if (backendResponse.qhantuy_error) {
+          console.error('❌ Error de Qhantuy:', backendResponse.message);
+          console.error('   Tip:', backendResponse.tip);
+          setErrorMessage(backendResponse.message || 'Error al verificar el pago con Qhantuy');
+        } else {
+          setErrorMessage(backendResponse.message || 'Error al verificar el pago');
+        }
+        setIsChecking(false);
+        return;
+      }
+      
+      // Verificar que tenemos data
+      if (!backendResponse.data) {
+        console.error('Backend returned success but no data');
+        setErrorMessage('Error: No se recibió respuesta del servidor');
         setIsChecking(false);
         return;
       }
@@ -2134,15 +2196,40 @@ function QhantuPaymentValidatorOrderStatus() {
       const data = backendResponse.data;
       console.log('✅ Payment check response (CONSULTA DE DEUDA - OrderStatus):', data);
       
+      // Verificar si Qhantuy retornó un error en el data (aunque el backend retornó success)
+      // Qhantuy puede retornar process: false o mensajes de error dentro del data
+      if (data.message && (data.message.includes('inactivo') || 
+                           data.message.includes('restringido') || 
+                           data.message.includes('inactive') || 
+                           data.message.includes('restricted'))) {
+        console.error('❌ Qhantuy returned error in data:', data.message);
+        setErrorMessage(data.message || 'Error al consultar el estado del pago en Qhantuy');
+        setIsChecking(false);
+        return;
+      }
+      
+      // Si process es false, puede ser un error
+      if (!data.process) {
+        console.warn('⚠️ Qhantuy returned process: false');
+        const errorMessage = data.message || 'Error al consultar el estado del pago. El proceso no se completó correctamente.';
+        setErrorMessage(errorMessage);
+        setIsChecking(false);
+        return;
+      }
+      
       // Según la respuesta real de Qhantuy: puede retornar items o payments
       // Estructura: { process: boolean, message: string, items: [...] } o { process: boolean, payments: [...] }
       // Cada item/payment tiene: id, payment_status, checkout_amount, checkout_currency
       // payment_status puede ser: 'success', 'holding', 'rejected'
       const paymentItems = data.items || data.payments || [];
       
-      if (data.process && paymentItems.length > 0) {
+      if (paymentItems.length > 0) {
         // Obtener el primer item/payment del array
         const payment = paymentItems[0];
+        
+        // DEBUG: Log todos los campos del objeto payment para ver qué tiene realmente
+        console.log('🔍 DEBUG: Payment object keys (OrderStatus):', Object.keys(payment));
+        console.log('🔍 DEBUG: Payment object completo (OrderStatus):', JSON.stringify(payment, null, 2));
         
         // Verificar el estado del pago desde la respuesta
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
@@ -2158,7 +2245,11 @@ function QhantuPaymentValidatorOrderStatus() {
                                const keys = Object.keys(payment);
                                for (const key of keys) {
                                  const normalizedKey = key.trim().toLowerCase();
-                                 if (normalizedKey === 'payment_status' || normalizedKey === 'status') {
+                                 if (normalizedKey === 'payment_status' || 
+                                     normalizedKey === 'status' || 
+                                     normalizedKey === 'paymentstatus' ||
+                                     normalizedKey === 'payment_state' ||
+                                     normalizedKey === 'state') {
                                    return payment[key];
                                  }
                                }
@@ -2168,10 +2259,19 @@ function QhantuPaymentValidatorOrderStatus() {
         console.log('📊 Payment details from CONSULTA DE DEUDA (OrderStatus):', {
           transaction_id: payment.id || payment.transaction_id || cleanTxId,
           payment_status: paymentStatus,
+          payment_status_source: paymentStatus ? 'found' : 'NOT FOUND - checking all fields',
+          payment_keys: Object.keys(payment),
           amount: payment.checkout_amount || payment.amount,
           currency: payment.checkout_currency || payment.currency,
           fullPayment: payment
         });
+        
+        // Si no encontramos payment_status, loguear advertencia
+        if (!paymentStatus) {
+          console.warn('⚠️ WARNING: payment_status not found in Qhantuy response (OrderStatus)');
+          console.warn('   Available payment fields:', Object.keys(payment));
+          console.warn('   Payment object:', JSON.stringify(payment, null, 2));
+        }
         
         // Según documentación: payment_status puede ser 'success', 'holding', 'rejected'
         // Solo procesar si payment_status === 'success' para evitar confirmaciones duplicadas

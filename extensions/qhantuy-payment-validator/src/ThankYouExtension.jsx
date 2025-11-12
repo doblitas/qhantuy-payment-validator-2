@@ -1182,6 +1182,13 @@ function QhantuPaymentValidatorThankYou() {
       console.log('Creating Qhantuy checkout via backend proxy');
       console.log('Request body:', requestBody);
       console.log('Request started at:', new Date().toISOString());
+      
+      // 🔍 LOGGING: Confirmar credenciales que se envían al backend
+      console.log('🔍 CREDENCIALES ENVIADAS AL BACKEND (ThankYou):');
+      console.log('   qhantuy_api_url:', apiUrl);
+      console.log('   qhantuy_api_token:', apiToken ? `${apiToken.substring(0, 10)}...` : '(vacío)');
+      console.log('   appkey:', appkey ? `${appkey.substring(0, 10)}...` : '(vacío)');
+      console.log('   Fuente: Settings de la extensión (customize checkout)');
 
       // IMPORTANTE: Usar el backend como proxy para evitar problemas de CORS
       // El backend hará la llamada a Qhantuy
@@ -1340,10 +1347,16 @@ function QhantuPaymentValidatorThankYou() {
   // Función para intentar crear el checkout
   const attemptCheckoutCreation = useCallback(async () => {
     // PREVENIR CREACIÓN DUPLICADA: Si ya estamos creando un checkout, salir inmediatamente
+    // ESTE CHECK DEBE SER LO PRIMERO EN LA FUNCIÓN
     if (isCreatingCheckoutRef.current) {
-      console.log('⚠️ Checkout creation already in progress, skipping duplicate call');
+      console.log('🚫 BLOCKED: Checkout creation already in progress (ThankYou), skipping duplicate call');
+      console.log('   Stack trace:', new Error().stack);
       return;
     }
+    
+    // ESTABLECER EL LOCK INMEDIATAMENTE para prevenir llamadas concurrentes
+    isCreatingCheckoutRef.current = true;
+    console.log('🔐 LOCK ACQUIRED: Starting checkout creation (ThankYou)...');
 
     // Limpiar timeouts anteriores si existen
     if (retryTimeoutRef.current) {
@@ -1396,9 +1409,8 @@ function QhantuPaymentValidatorThankYou() {
         return;
       }
 
-      // MARCADOR: Estamos creando checkout ahora
-      isCreatingCheckoutRef.current = true;
-      console.log('🔐 Lock acquired: Creating checkout...');
+      // NOTA: El lock ya fue establecido al inicio de la función
+      console.log('🔐 Lock already acquired, proceeding with checkout creation...');
 
       // Verificar si tenemos los datos necesarios
       if (!hasRequiredOrderData()) {
@@ -1511,6 +1523,9 @@ function QhantuPaymentValidatorThankYou() {
           setTransactionId(cleanedFinalCheck);
           const existingQr = await storage.read('qr_image');
           if (existingQr) setQrData(existingQr);
+          // No guardar en Shopify si ya existe uno diferente (evitar duplicados)
+          setPaymentStatus('pending');
+          console.log('✅ Payment initialized successfully - using existing transaction');
         } else {
           // Guardar el nuevo checkout con transaction_id limpio
           console.log('✅ Saving new checkout with transaction_id:', cleanTransactionId);
@@ -1523,7 +1538,8 @@ function QhantuPaymentValidatorThankYou() {
           
           console.log('✅ Transaction ID saved to storage:', cleanTransactionId);
           
-          // Guardar Transaction ID en Shopify como nota del pedido y en timeline
+          // IMPORTANTE: Guardar Transaction ID en Shopify INMEDIATAMENTE después de recibir el QR
+          // Esto debe hacerse antes de cambiar el estado a 'pending' para que la nota aparezca justo después del QR
           try {
             const { number, id: orderId, confirmationNumber, orderNumber: orderNum } = getOrderIdentifiers();
             
@@ -1609,11 +1625,15 @@ function QhantuPaymentValidatorThankYou() {
           } catch (error) {
             console.error('❌ Error saving transaction ID to Shopify:', error);
             // No bloquear el flujo si falla, pero loguear el error
+            // La nota se puede agregar más tarde si es necesario
           }
+          
+          // IMPORTANTE: Cambiar el estado a 'pending' DESPUÉS de guardar la nota en Shopify
+          // Esto asegura que la nota aparezca justo después de recibir el QR
+          setPaymentStatus('pending');
+          console.log('✅ Payment initialized successfully');
         }
         
-        setPaymentStatus('pending');
-        console.log('✅ Payment initialized successfully');
         retryAttemptRef.current = 0; // Reset retry count on success
         isInitializingRef.current = false;
         isCreatingCheckoutRef.current = false; // Liberar el lock
@@ -1635,14 +1655,22 @@ function QhantuPaymentValidatorThankYou() {
 
   // Efecto para inicializar el pago con reintentos y timeout
   useEffect(() => {
-    console.log('Init payment effect triggered:', {
+    console.log('Init payment effect triggered (ThankYou):', {
       isLoading,
       hasOrderData: !!orderData,
       hasTotalAmount: !!totalAmount,
       missingConfig,
       paymentStatus,
-      retryAttempt: retryAttemptRef.current
+      retryAttempt: retryAttemptRef.current,
+      isInitializing: isInitializingRef.current,
+      isCreatingCheckout: isCreatingCheckoutRef.current
     });
+    
+    // PREVENCIÓN CRÍTICA: Si ya estamos creando un checkout, NO hacer nada
+    if (isCreatingCheckoutRef.current) {
+      console.log('🚫 BLOCKED: Checkout creation already in progress, skipping entire effect');
+      return;
+    }
     
     // Limpiar timeouts cuando el componente se desmonta o cambian las dependencias
     const cleanup = () => {
@@ -1679,10 +1707,12 @@ function QhantuPaymentValidatorThankYou() {
         console.log('Already initializing but data is now available, continuing...');
         // Los datos ya están disponibles, la función attemptCheckoutCreation 
         // se ejecutará automáticamente en el siguiente retry o si el timeout aún está activo
-        // Pero para asegurarnos, podemos forzar una ejecución inmediata si no hay retry activo
-        if (!retryTimeoutRef.current) {
-          console.log('No retry active, attempting checkout creation immediately...');
-          attemptCheckoutCreation();
+        // IMPORTANTE: NO forzar ejecución aquí para evitar duplicados
+        // El retry mechanism se encargará de ejecutar cuando sea necesario
+        if (isCreatingCheckoutRef.current) {
+          console.log('⚠️ Checkout creation already in progress, skipping duplicate call');
+        } else if (!retryTimeoutRef.current) {
+          console.log('⚠️ No retry active but already initializing - this should not happen');
         }
       } else {
         console.log('Already initializing and still waiting for data, skipping...');
@@ -1690,7 +1720,15 @@ function QhantuPaymentValidatorThankYou() {
       return cleanup;
     }
 
+    // PREVENCIÓN: Establecer flag ANTES de cualquier operación async
+    // Esto previene que múltiples ejecuciones del useEffect pasen este punto
+    if (isInitializingRef.current) {
+      console.log('🚫 BLOCKED: Already initializing, skipping duplicate initialization');
+      return cleanup;
+    }
+
     // Iniciar proceso de inicialización
+    console.log('🔒 ACQUIRING INIT LOCK: Starting initialization...');
     isInitializingRef.current = true;
     startTimeRef.current = Date.now();
     retryAttemptRef.current = 0;
@@ -1710,12 +1748,18 @@ function QhantuPaymentValidatorThankYou() {
     if (hasData) {
       console.log('Data available immediately, starting checkout creation...');
       // Ejecutar inmediatamente si tenemos datos
+      // IMPORTANTE: attemptCheckoutCreation establecerá isCreatingCheckoutRef
       attemptCheckoutCreation();
     } else {
       console.log('Data not yet available, waiting 100ms before first attempt...');
       // Pequeño delay si no tenemos datos todavía
       const initialDelay = setTimeout(() => {
-        attemptCheckoutCreation();
+        // Verificar nuevamente antes de ejecutar
+        if (!isCreatingCheckoutRef.current) {
+          attemptCheckoutCreation();
+        } else {
+          console.log('🚫 BLOCKED: Checkout creation started during delay, skipping');
+        }
       }, 100);
       
       return () => {
@@ -1829,6 +1873,11 @@ function QhantuPaymentValidatorThankYou() {
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
       console.log('Calling backend check-debt endpoint:', checkDebtUrl);
       console.log('📋 Backend API URL used:', backendApiUrl);
+      console.log('🔍 Credenciales enviadas a check-debt:', {
+        qhantuy_api_url: apiUrl,
+        hasApiToken: !!apiToken,
+        hasAppkey: !!appkey
+      });
       
       const response = await fetch(checkDebtUrl, {
         method: 'POST',
@@ -1838,7 +1887,9 @@ function QhantuPaymentValidatorThankYou() {
         },
         body: JSON.stringify({
           transaction_id: cleanTxId,  // Enviar transaction_id directamente según documentación
-          qhantuy_api_url: apiUrl  // Enviar URL de Qhantuy desde settings de la extensión
+          qhantuy_api_url: apiUrl,  // Enviar URL de Qhantuy desde settings de la extensión
+          qhantuy_api_token: apiToken,  // IMPORTANTE: Enviar API Token desde settings de la extensión
+          appkey: appkey  // IMPORTANTE: Enviar AppKey desde settings de la extensión
         })
       });
 

@@ -85,6 +85,14 @@
     {
       "source": "/api/tokens",
       "destination": "/api/tokens.js"
+    },
+    {
+      "source": "/api/webhooks/orders/create",
+      "destination": "/api/webhooks/orders/create.js"
+    },
+    {
+      "source": "/api/webhooks/orders/updated",
+      "destination": "/api/webhooks/orders/updated.js"
     }
   ]
 }

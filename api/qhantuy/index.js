@@ -130,7 +130,12 @@ export default async function handler(req, res) {
         items_count: items.length,
         customer_email,
         customer_first_name: customer_first_name || '(vacío)',
-        customer_last_name: customer_last_name || '(vacío)'
+        customer_last_name: customer_last_name || '(vacío)',
+        has_appkey: !!appkey,
+        appkey_preview: appkey ? `${appkey.substring(0, 10)}...` : '(no proporcionado)',
+        has_api_token: !!qhantuy_api_token,
+        api_token_preview: qhantuy_api_token ? `${qhantuy_api_token.substring(0, 10)}...` : '(no proporcionado)',
+        credentials_source: 'From extension settings (customize checkout)'
       });
       
       // 🔍 LOGGING: Confirmar datos del cliente que se envían a Qhantuy

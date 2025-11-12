@@ -306,13 +306,11 @@ export async function handleQhantuCallback(req, res) {
     
     let existingNote = '';
     try {
-      const getNoteResult = await client.query({
-        data: {
-          query: getNoteQuery,
-          variables: { id: graphQLOrderId }
-        }
+      // Usar client.request() en lugar de client.query() (deprecado)
+      const getNoteResult = await client.request(getNoteQuery, {
+        variables: { id: graphQLOrderId }
       });
-      existingNote = getNoteResult.body.data?.order?.note || '';
+      existingNote = getNoteResult.data?.order?.note || '';
     } catch (error) {
       console.warn('⚠️ Could not fetch existing note:', error.message);
     }
@@ -356,15 +354,13 @@ Timestamp: ${new Date().toISOString()}`;
         }
       };
 
-      const noteResult = await client.query({
-        data: {
-          query: noteQuery,
-          variables: noteVariables
-        }
+      // Usar client.request() en lugar de client.query() (deprecado)
+      const noteResult = await client.request(noteQuery, {
+        variables: noteVariables
       });
-
-      if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
-        console.error('GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+      
+      if (noteResult.data?.orderUpdate?.userErrors?.length > 0) {
+        console.error('GraphQL errors updating note:', noteResult.data.orderUpdate.userErrors);
       } else {
         console.log('✅ Order note updated with callback verification');
       }
@@ -620,13 +616,11 @@ export async function confirmPayment(req, res) {
     
     let existingNote = '';
     try {
-      const getNoteResult = await client.query({
-        data: {
-          query: getNoteQuery,
-          variables: { id: graphQLOrderId }
-        }
+      // Usar client.request() en lugar de client.query() (deprecado)
+      const getNoteResult = await client.request(getNoteQuery, {
+        variables: { id: graphQLOrderId }
       });
-      existingNote = getNoteResult.body.data?.order?.note || '';
+      existingNote = getNoteResult.data?.order?.note || '';
     } catch (error) {
       console.warn('⚠️ Could not fetch existing note:', error.message);
     }
@@ -654,15 +648,13 @@ Confirmed at: ${new Date().toISOString()}`;
         }
       };
 
-      const noteResult = await client.query({
-        data: {
-          query: noteQuery,
-          variables: noteVariables
-        }
+      // Usar client.request() en lugar de client.query() (deprecado)
+      const noteResult = await client.request(noteQuery, {
+        variables: noteVariables
       });
-
-      if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
-        console.error('GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+      
+      if (noteResult.data?.orderUpdate?.userErrors?.length > 0) {
+        console.error('GraphQL errors updating note:', noteResult.data.orderUpdate.userErrors);
       } else {
         console.log('✅ Order note updated with payment verification');
       }
@@ -903,21 +895,35 @@ export async function checkDebtStatus(req, res) {
       });
     }
 
-    // Usar qhantuy_api_url desde los settings del frontend (prioridad)
-    // Si no viene del frontend, usar variable de entorno
-    // Esto permite usar URLs de test o producción según la configuración de la extensión
+    // Usar credenciales desde los settings del frontend (prioridad)
+    // Si no vienen del frontend, usar variables de entorno
+    // Esto permite usar credenciales de test o producción según la configuración de la extensión
     const apiUrl = qhantuy_api_url || 
                    process.env.QHANTUY_API_URL || 
                    'https://checkout.qhantuy.com/external-api';
-    const apiToken = process.env.QHANTUY_API_TOKEN;
-    const appkey = process.env.QHANTUY_APPKEY;
     
-    console.log('📡 Using Qhantuy API URL:', apiUrl, qhantuy_api_url ? '(from extension settings)' : '(from environment)');
+    // IMPORTANTE: Priorizar credenciales del frontend (settings de la extensión)
+    // Si vienen del frontend, usarlas; si no, usar variables de entorno
+    const frontendApiToken = req.body.qhantuy_api_token;
+    const frontendAppkey = req.body.appkey;
+    
+    const apiToken = frontendApiToken || process.env.QHANTUY_API_TOKEN;
+    const appkey = frontendAppkey || process.env.QHANTUY_APPKEY;
+    
+    console.log('📡 Using Qhantuy API credentials:', {
+      apiUrl: apiUrl,
+      apiUrlSource: qhantuy_api_url ? '(from extension settings)' : '(from environment)',
+      apiTokenSource: frontendApiToken ? '(from extension settings)' : '(from environment)',
+      appkeySource: frontendAppkey ? '(from extension settings)' : '(from environment)',
+      hasApiToken: !!apiToken,
+      hasAppkey: !!appkey
+    });
 
     if (!apiToken || !appkey) {
       return res.status(500).json({
         success: false,
-        message: 'Qhantuy API credentials not configured'
+        message: 'Qhantuy API credentials not configured',
+        tip: 'Asegúrate de configurar las credenciales en los settings de la extensión o en las variables de entorno del backend.'
       });
     }
 
@@ -968,17 +974,15 @@ export async function checkDebtStatus(req, res) {
               }
             `;
             
-            const orderResult = await client.query({
-              data: {
-                query: getOrderQuery,
-                variables: { id: graphQLOrderId }
-              }
+            // Usar client.request() en lugar de client.query() (deprecado)
+            const orderResult = await client.request(getOrderQuery, {
+              variables: { id: graphQLOrderId }
             });
             
-            if (orderResult.body.data?.order?.note) {
+            if (orderResult.data?.order?.note) {
               // Try to extract transaction_id from note
               // Format: "Transaction ID: 12345" or similar
-              const note = orderResult.body.data.order.note;
+              const note = orderResult.data.order.note;
               const txIdMatch = note.match(/Transaction ID:\s*(\d+)/i);
               if (txIdMatch && txIdMatch[1]) {
                 paymentIds = [txIdMatch[1].trim()];
@@ -1046,6 +1050,25 @@ export async function checkDebtStatus(req, res) {
     const data = await response.json();
     console.log('✅ CONSULTA DE DEUDA response:', data);
 
+    // Qhantuy puede retornar errores incluso con status 200
+    // Verificar si hay un mensaje de error en la respuesta
+    if (data.message && (data.message.includes('inactivo') || 
+                         data.message.includes('restringido') || 
+                         data.message.includes('inactive') || 
+                         data.message.includes('restricted') ||
+                         !data.process)) {
+      console.error('❌ Qhantuy returned error message:', data.message);
+      console.error('   Full response:', JSON.stringify(data, null, 2));
+      
+      return res.status(400).json({
+        success: false,
+        message: data.message || 'Error al consultar el estado del pago en Qhantuy',
+        qhantuy_error: true,
+        qhantuy_response: data,
+        tip: 'Este error proviene de Qhantuy. Verifica que tu comercio esté activo y que las credenciales sean correctas.'
+      });
+    }
+
     // According to documentation, response can have:
     // - process: boolean
     // - payments: array (documentación) OR items: array (respuesta real de Qhantuy)
@@ -1055,12 +1078,62 @@ export async function checkDebtStatus(req, res) {
     
     if (data.process && paymentItems.length > 0) {
       const payment = paymentItems[0];
+      
+      // DEBUG: Log todos los campos del objeto payment para ver qué tiene realmente
+      console.log('🔍 DEBUG: Payment object keys:', Object.keys(payment));
+      console.log('🔍 DEBUG: Payment object completo:', JSON.stringify(payment, null, 2));
+      
+      // Buscar payment_status en todas las posibles variaciones
+      // Qhantuy puede usar diferentes nombres de campos
+      const paymentStatus = payment.payment_status || 
+                           payment.status || 
+                           payment.paymentStatus ||
+                           payment.payment_state ||
+                           payment.state ||
+                           payment.paymentStatus ||
+                           // Buscar en keys que puedan tener espacios o variaciones
+                           (() => {
+                             const keys = Object.keys(payment);
+                             for (const key of keys) {
+                               const normalizedKey = key.trim().toLowerCase();
+                               if (normalizedKey === 'payment_status' || 
+                                   normalizedKey === 'status' || 
+                                   normalizedKey === 'paymentstatus' ||
+                                   normalizedKey === 'payment_state' ||
+                                   normalizedKey === 'state') {
+                                 return payment[key];
+                               }
+                             }
+                             return null;
+                           })();
+      
       console.log('📊 Payment status:', {
         transaction_id: payment.id || payment.transaction_id || paymentIds[0],
-        payment_status: payment.payment_status || payment.status || payment.paymentStatus,
+        payment_status: paymentStatus,
+        payment_status_source: paymentStatus ? 'found' : 'NOT FOUND - checking all fields',
         amount: payment.checkout_amount || payment.amount,
         currency: payment.checkout_currency || payment.currency,
+        payment_keys: Object.keys(payment),
         fullResponse: data
+      });
+      
+      // Si no encontramos payment_status, loguear advertencia pero continuar
+      if (!paymentStatus) {
+        console.warn('⚠️ WARNING: payment_status not found in Qhantuy response');
+        console.warn('   Available payment fields:', Object.keys(payment));
+        console.warn('   Payment object:', JSON.stringify(payment, null, 2));
+      }
+    } else if (!data.process) {
+      // Si process es false, puede ser un error aunque no haya mensaje explícito
+      console.warn('⚠️ Qhantuy returned process: false');
+      console.warn('   Response:', JSON.stringify(data, null, 2));
+      
+      return res.status(400).json({
+        success: false,
+        message: data.message || 'Error al consultar el estado del pago. El proceso no se completó correctamente.',
+        qhantuy_error: true,
+        qhantuy_response: data,
+        tip: 'Verifica que el transaction_id sea correcto y que el pago exista en Qhantuy.'
       });
     }
 
@@ -1394,6 +1467,18 @@ export async function saveTransactionId(req, res) {
     }
     
     console.log('✅ Shop session found for:', shopDomain, 'shop:', session.shop);
+    
+    // IMPORTANTE: Usar session.shop (dominio real de la sesión), no shopDomain (puede ser ID interno)
+    // session.shop es el dominio real después de que getShopSession lo resuelve
+    const realShopDomain = session.shop; // Dominio real resuelto por getShopSession
+    
+    // 🔍 LOGGING: Confirmar que estamos usando el dominio correcto
+    console.log('🔍 Shop domain resolution (saveTransactionId):', {
+      received_shopDomain: shopDomain,
+      resolved_realShopDomain: realShopDomain,
+      session_shop: session.shop,
+      match: shopDomain === realShopDomain ? '✅ Same' : '⚠️ Different (using resolved)'
+    });
 
     // Extract numeric order ID for REST API
     let numericOrderId = order_id;
@@ -1451,16 +1536,14 @@ export async function saveTransactionId(req, res) {
     let existingNote = '';
     let orderName = '';
     try {
-      const getOrderResult = await client.query({
-        data: {
-          query: getOrderQuery,
-          variables: { id: graphQLOrderId }
-        }
+      // Usar client.request() en lugar de client.query() (deprecado)
+      const getOrderResult = await client.request(getOrderQuery, {
+        variables: { id: graphQLOrderId }
       });
       
-      if (getOrderResult.body.data?.order) {
-        existingNote = getOrderResult.body.data.order.note || '';
-        orderName = getOrderResult.body.data.order.name || '';
+      if (getOrderResult.data?.order) {
+        existingNote = getOrderResult.data.order.note || '';
+        orderName = getOrderResult.data.order.name || '';
       }
     } catch (error) {
       console.warn('⚠️ Could not fetch existing order data:', error.message);
@@ -1480,7 +1563,7 @@ export async function saveTransactionId(req, res) {
           message: 'Transaction ID already exists in order notes',
           transaction_id: transaction_id,
           order_id: numericOrderId,
-          shop: shopDomain
+          shop: realShopDomain
         });
       }
       
@@ -1503,7 +1586,7 @@ export async function saveTransactionId(req, res) {
                 message: 'Recent note found. Skipping to prevent duplicate notes.',
                 transaction_id: transaction_id,
                 order_id: numericOrderId,
-                shop: shopDomain,
+                shop: realShopDomain,
                 note_age_seconds: Math.round(secondsDiff)
               });
             }
@@ -1515,7 +1598,7 @@ export async function saveTransactionId(req, res) {
     }
     
     // Build note with Transaction ID
-    // IMPORTANTE: Usar realShopDomain (dominio real de la sesión), no shopDomain (puede ser ID interno)
+    // realShopDomain ya está definido arriba (después de obtener la sesión)
     const transactionNote = `Qhantuy QR Payment Created
 Transaction ID: ${transaction_id}
 ${confirmation_number ? `Confirmation Number: ${confirmation_number}\n` : ''}${orderName ? `Order Number: ${orderName}\n` : ''}Internal Code: ${internal_code || 'N/A'}
@@ -1548,28 +1631,27 @@ Shop: ${realShopDomain}`;
       }
     };
 
-    const noteResult = await client.query({
-      data: {
-        query: noteQuery,
-        variables: noteVariables
-      }
+    // Usar client.request() en lugar de client.query() (deprecado)
+    const noteResult = await client.request(noteQuery, {
+      variables: noteVariables
     });
 
-    if (noteResult.body.data?.orderUpdate?.userErrors?.length > 0) {
-      console.error('❌ GraphQL errors updating note:', noteResult.body.data.orderUpdate.userErrors);
+    if (noteResult.data?.orderUpdate?.userErrors?.length > 0) {
+      console.error('❌ GraphQL errors updating note:', noteResult.data.orderUpdate.userErrors);
       // Still return success if timeline event was created
       return res.status(200).json({
         success: true,
         message: 'Transaction ID saved to timeline (note update had errors)',
         transaction_id: transaction_id,
-        warnings: noteResult.body.data.orderUpdate.userErrors
+        warnings: noteResult.data.orderUpdate.userErrors
       });
     }
 
     console.log('✅ Transaction ID saved successfully:', {
       transaction_id,
       order_id: numericOrderId,
-      shop: shopDomain,
+      shop: realShopDomain, // Usar dominio real, no el ID interno
+      original_shop_domain: shopDomain, // Mantener referencia al dominio original recibido
       internal_code
     });
 
@@ -1578,7 +1660,7 @@ Shop: ${realShopDomain}`;
       message: 'Transaction ID saved successfully to timeline and notes',
       transaction_id: transaction_id,
       order_id: numericOrderId,
-      shop: shopDomain
+      shop: realShopDomain // Usar dominio real en la respuesta
     });
 
   } catch (error) {
