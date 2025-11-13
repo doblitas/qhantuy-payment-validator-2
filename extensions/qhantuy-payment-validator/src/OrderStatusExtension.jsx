@@ -466,9 +466,11 @@ function QhantuPaymentValidatorOrderStatus() {
     try {
       const formattedSettings = formatSettings(settingsRaw);
       const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
-      const apiUrl = formattedSettings.qhantuyApiUrl || 'https://checkout.qhantuy.com/external-api';
-      const apiToken = formattedSettings.qhantuyApiToken;
-      const appkey = formattedSettings.qhantuyAppkey;
+      // FIX: Usar los nombres correctos de las propiedades (apiUrl, apiToken, appkey)
+      // NO usar qhantuyApiUrl, qhantuyApiToken, qhantuyAppkey (esos no existen)
+      const apiUrl = formattedSettings.apiUrl || 'https://checkout.qhantuy.com/external-api';
+      const apiToken = formattedSettings.apiToken;
+      const appkey = formattedSettings.appkey;
       
       if (!apiToken || !appkey) {
         console.warn('⚠️ Qhantuy credentials not available for check-debt');
