@@ -2376,8 +2376,12 @@ function QhantuPaymentValidatorThankYou() {
       
       {/* Estado: Éxito */}
       {paymentStatus === 'success' && (
-        <BlockStack spacing="base" inlineAlignment="center">
-          <SuccessCheckMark size={100} gifUrl={formattedSettings.successGifUrl} />
+        <BlockStack spacing="base">
+          {/* GIF de animación centrado */}
+          <BlockStack spacing="tight" inlineAlignment="center">
+            <SuccessCheckMark size={120} gifUrl={formattedSettings.successGifUrl} />
+          </BlockStack>
+          {/* Banner de ancho completo */}
           <Banner status="success">
             <BlockStack spacing="tight">
               <Text emphasis="bold">¡Pago Confirmado!</Text>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Image, Text } from '@shopify/ui-extensions-react/checkout';
+import { Image, Text, BlockStack } from '@shopify/ui-extensions-react/checkout';
 
 /**
  * Componente de check mark animado para mostrar cuando el pago es exitoso
@@ -9,20 +9,22 @@ import { Image, Text } from '@shopify/ui-extensions-react/checkout';
  * @param {number} size - Tamaño del check mark en píxeles (default: 100)
  * @param {string} gifUrl - URL del GIF animado (opcional)
  */
-export function SuccessCheckMark({ size = 100, gifUrl = null }) {
+export function SuccessCheckMark({ size = 120, gifUrl = null }) {
   // URL a usar (priorizar la proporcionada)
   const imageUrl = gifUrl;
   
   // Si no hay URL válida, mostrar emoji como fallback
   if (!imageUrl || imageUrl.trim() === '') {
     return (
-      <Text 
-        emphasis="bold"
-        size="large"
-        appearance="success"
-      >
-        ✅
-      </Text>
+      <BlockStack inlineAlignment="center">
+        <Text 
+          emphasis="bold"
+          size="large"
+          appearance="success"
+        >
+          ✅
+        </Text>
+      </BlockStack>
     );
   }
   
@@ -38,13 +40,15 @@ export function SuccessCheckMark({ size = 100, gifUrl = null }) {
   if (!isValidUrl) {
     // Si no es una URL válida, usar emoji como fallback
     return (
-      <Text 
-        emphasis="bold"
-        size="large"
-        appearance="success"
-      >
-        ✅
-      </Text>
+      <BlockStack inlineAlignment="center">
+        <Text 
+          emphasis="bold"
+          size="large"
+          appearance="success"
+        >
+          ✅
+        </Text>
+      </BlockStack>
     );
   }
   
@@ -64,12 +68,17 @@ export function SuccessCheckMark({ size = 100, gifUrl = null }) {
     ? `${imageUrl}&_t=${imageKey}`
     : `${imageUrl}?_t=${imageKey}`;
   
+  // Nota: El componente Image de Shopify UI Extensions no tiene una prop directa para size
+  // El tamaño se controla mediante el contenedor y el CSS del tema
+  // Usamos un BlockStack para centrar la imagen
   return (
-    <Image
-      key={imageKey} // Key único para forzar re-renderizado
-      source={imageUrlWithCacheBuster}
-      alt="Pago confirmado"
-    />
+    <BlockStack inlineAlignment="center">
+      <Image
+        key={imageKey} // Key único para forzar re-renderizado
+        source={imageUrlWithCacheBuster}
+        alt="Pago confirmado"
+      />
+    </BlockStack>
   );
 }
 
