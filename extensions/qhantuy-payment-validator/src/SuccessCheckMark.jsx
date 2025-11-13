@@ -13,8 +13,18 @@ export function SuccessCheckMark({ size = 120, gifUrl = null }) {
   // URL a usar (priorizar la proporcionada)
   const imageUrl = gifUrl;
   
+  // Logging para debugging
+  console.log('🎬 SuccessCheckMark - GIF URL recibida:', {
+    gifUrl: gifUrl,
+    imageUrl: imageUrl,
+    hasUrl: !!imageUrl,
+    urlLength: imageUrl ? imageUrl.length : 0,
+    urlTrimmed: imageUrl ? imageUrl.trim() : ''
+  });
+  
   // Si no hay URL válida, mostrar emoji como fallback
   if (!imageUrl || imageUrl.trim() === '') {
+    console.warn('⚠️ SuccessCheckMark - No hay URL de GIF, mostrando emoji fallback');
     return (
       <BlockStack inlineAlignment="center">
         <Text 
@@ -30,15 +40,20 @@ export function SuccessCheckMark({ size = 120, gifUrl = null }) {
   
   // Validar que sea una URL válida
   let isValidUrl = false;
+  let urlError = null;
   try {
     new URL(imageUrl);
     isValidUrl = true;
+    console.log('✅ SuccessCheckMark - URL válida:', imageUrl);
   } catch (error) {
     isValidUrl = false;
+    urlError = error.message;
+    console.error('❌ SuccessCheckMark - URL inválida:', imageUrl, error);
   }
   
   if (!isValidUrl) {
     // Si no es una URL válida, usar emoji como fallback
+    console.warn('⚠️ SuccessCheckMark - URL inválida, mostrando emoji fallback. Error:', urlError);
     return (
       <BlockStack inlineAlignment="center">
         <Text 

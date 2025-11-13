@@ -120,7 +120,7 @@ export function formatSettings(mergedSettings) {
     }
   }
   
-  return {
+  const formatted = {
     apiUrl: mergedSettings.qhantuy_api_url || 'https://checkout.qhantuy.com/external-api',
     apiToken: mergedSettings.qhantuy_api_token || '',
     appkey: mergedSettings.qhantuy_appkey || '',
@@ -132,5 +132,15 @@ export function formatSettings(mergedSettings) {
     source: mergedSettings.source || 'default',
     hasConfiguredSettings: !!(mergedSettings.qhantuy_api_token && mergedSettings.qhantuy_appkey)
   };
+  
+  // Logging para debugging del GIF URL
+  console.log('🎬 formatSettings - Success GIF URL:', {
+    success_gif_url: mergedSettings.success_gif_url,
+    successGifUrl: formatted.successGifUrl,
+    hasSuccessGifUrl: !!formatted.successGifUrl,
+    mergedSettingsKeys: Object.keys(mergedSettings)
+  });
+  
+  return formatted;
 }
 

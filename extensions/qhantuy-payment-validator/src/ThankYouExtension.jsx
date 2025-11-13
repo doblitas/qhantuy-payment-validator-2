@@ -2379,7 +2379,14 @@ function QhantuPaymentValidatorThankYou() {
         <BlockStack spacing="base">
           {/* GIF de animación centrado */}
           <BlockStack spacing="tight" inlineAlignment="center">
-            <SuccessCheckMark size={120} gifUrl={formattedSettings.successGifUrl} />
+            {(() => {
+              console.log('🎬 ThankYou - Enviando GIF URL a SuccessCheckMark:', {
+                successGifUrl: formattedSettings.successGifUrl,
+                hasSuccessGifUrl: !!formattedSettings.successGifUrl,
+                formattedSettingsKeys: Object.keys(formattedSettings)
+              });
+              return <SuccessCheckMark size={120} gifUrl={formattedSettings.successGifUrl} />;
+            })()}
           </BlockStack>
           {/* Banner de ancho completo */}
           <Banner status="success">
