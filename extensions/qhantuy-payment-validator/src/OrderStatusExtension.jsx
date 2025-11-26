@@ -1596,12 +1596,18 @@ function QhantuPaymentValidatorOrderStatus() {
           if (paymentStatusValue === 'success' || paymentStatusValue === 'paid') {
             setPaymentStatus('success');
             await storage.write('payment_status', 'success');
+            setPollingStopped(true); // Detener polling si ya está pagado
           } else if (paymentStatusValue === 'rejected' || paymentStatusValue === 'failed') {
             setPaymentStatus('rejected');
             setErrorMessage('El pago fue rechazado. Por favor intenta de nuevo.');
+            setPollingStopped(true); // Detener polling si fue rechazado
           } else {
             // pending, holding, etc.
             setPaymentStatus('pending');
+            // IMPORTANTE: Resetear polling para que se inicie automáticamente
+            setPollingStopped(false);
+            setPollingStartTime(null);
+            console.log('✅ Estado establecido a pending, polling se iniciará automáticamente (OrderStatus)');
           }
           
           // Guardar transaction_id en storage si no estaba
@@ -1744,6 +1750,9 @@ function QhantuPaymentValidatorOrderStatus() {
           if (existingQr) setQrData(existingQr);
           // No guardar en Shopify si ya existe uno diferente (evitar duplicados)
           setPaymentStatus('pending');
+          // IMPORTANTE: Resetear polling para que se inicie automáticamente
+          setPollingStopped(false);
+          setPollingStartTime(null);
           console.log('✅ Payment initialized successfully (OrderStatus) - using existing transaction');
         } else {
           // Guardar el nuevo checkout con transaction_id limpio
@@ -1856,6 +1865,9 @@ function QhantuPaymentValidatorOrderStatus() {
           // IMPORTANTE: Cambiar el estado a 'pending' DESPUÉS de guardar la nota en Shopify
           // Esto asegura que la nota aparezca justo después de recibir el QR
           setPaymentStatus('pending');
+          // IMPORTANTE: Resetear polling para que se inicie automáticamente
+          setPollingStopped(false);
+          setPollingStartTime(null);
           console.log('✅ Payment initialized successfully (OrderStatus)');
         }
         
@@ -2404,8 +2416,10 @@ function QhantuPaymentValidatorOrderStatus() {
     }
   }, [transactionId, isChecking, getOrderIdentifiers, shop, formattedSettings, storage]);
   
-  // Polling automático: verificar el estado del pago cada X segundos cuando está pendiente
-  // Se detiene automáticamente después de 2 minutos para evitar verificaciones excesivas
+  // Polling automático: verificar el estado del pago con intervalos dinámicos
+  // - Primeros 2 minutos: cada 5 segundos
+  // - Después (hasta 5 minutos): cada 30 segundos
+  // - Después de 5 minutos: el backend hace verificaciones cada 10 minutos
   useEffect(() => {
     // Solo hacer polling si:
     // 1. El estado es 'pending' (pago pendiente)
@@ -2416,50 +2430,93 @@ function QhantuPaymentValidatorOrderStatus() {
       return;
     }
 
-    // Tiempo máximo de polling automático: 2 minutos (120 segundos)
-    const AUTO_POLLING_MAX_DURATION = 2 * 60 * 1000; // 2 minutos en milisegundos
+    // Intervalos según el tiempo transcurrido
+    const FAST_INTERVAL = 5 * 1000; // 5 segundos para los primeros 2 minutos
+    const SLOW_INTERVAL = 30 * 1000; // 30 segundos después de 2 minutos
+    const FAST_PHASE_DURATION = 2 * 60 * 1000; // 2 minutos
+    const SLOW_PHASE_DURATION = 5 * 60 * 1000; // 5 minutos total
+    const TOTAL_POLLING_DURATION = SLOW_PHASE_DURATION; // 5 minutos total
 
     // Guardar tiempo de inicio si es la primera vez
     if (!pollingStartTime) {
       setPollingStartTime(Date.now());
     }
 
-    console.log('🔄 Iniciando polling automático para verificar pago cada', checkInterval / 1000, 'segundos (OrderStatus)');
-    console.log('⏱️ El polling automático se detendrá después de 2 minutos para solicitar verificación manual');
+    console.log('🔄 Iniciando polling automático (OrderStatus):');
+    console.log('   - Primeros 2 minutos: cada 5 segundos');
+    console.log('   - Después (hasta 5 minutos): cada 30 segundos');
+    console.log('   - Después de 5 minutos: el backend verificará cada 10 minutos');
 
     let pollingAttempts = 0;
-    const maxAttempts = Math.floor(AUTO_POLLING_MAX_DURATION / checkInterval);
+    let currentInterval = FAST_INTERVAL;
+    let intervalId = null;
 
-    // Crear intervalo de verificación
-    const pollingInterval = setInterval(() => {
+    // Función para determinar el intervalo actual según el tiempo transcurrido
+    const getCurrentInterval = (elapsed) => {
+      if (elapsed < FAST_PHASE_DURATION) {
+        return FAST_INTERVAL; // Primeros 2 minutos: cada 5 segundos
+      } else if (elapsed < SLOW_PHASE_DURATION) {
+        return SLOW_INTERVAL; // Después: cada 30 segundos hasta 5 minutos
+      }
+      return null; // Después de 5 minutos, el backend se encarga
+    };
+
+    // Función para ejecutar la verificación
+    const executeCheck = () => {
       pollingAttempts++;
       const elapsed = Date.now() - (pollingStartTime || Date.now());
       
-      // Detener si hemos alcanzado el tiempo máximo (2 minutos)
-      if (elapsed >= AUTO_POLLING_MAX_DURATION || pollingAttempts >= maxAttempts) {
-        console.log('⏱️ Tiempo máximo de polling automático alcanzado (2 minutos). Cambiando a verificación manual (OrderStatus).');
-        clearInterval(pollingInterval);
+      // Detener si hemos alcanzado el tiempo máximo (5 minutos)
+      if (elapsed >= TOTAL_POLLING_DURATION) {
+        console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (OrderStatus).');
+        if (intervalId) {
+          clearInterval(intervalId);
+        }
         setPollingStopped(true);
         return;
       }
 
-      console.log(`🔄 Polling automático (${pollingAttempts}/${maxAttempts}) (OrderStatus): verificando estado del pago...`);
-      checkPaymentStatus();
-    }, checkInterval);
+      // Verificar si necesitamos cambiar el intervalo
+      const newInterval = getCurrentInterval(elapsed);
+      if (newInterval && newInterval !== currentInterval) {
+        console.log(`🔄 Cambiando intervalo de polling: ${currentInterval / 1000}s -> ${newInterval / 1000}s (OrderStatus)`);
+        currentInterval = newInterval;
+        if (intervalId) {
+          clearInterval(intervalId);
+        }
+        // Reiniciar el intervalo con el nuevo valor
+        intervalId = setInterval(executeCheck, currentInterval);
+      }
 
-    // Timeout máximo: dejar de verificar después de AUTO_POLLING_MAX_DURATION
+      const phase = elapsed < FAST_PHASE_DURATION ? 'FAST (5s)' : 'SLOW (30s)';
+      console.log(`🔄 Polling automático [${phase}] (${pollingAttempts}) (OrderStatus): verificando estado del pago...`);
+      checkPaymentStatus();
+    };
+
+    // Iniciar con el intervalo rápido
+    currentInterval = FAST_INTERVAL;
+    intervalId = setInterval(executeCheck, currentInterval);
+
+    // Ejecutar primera verificación inmediatamente
+    executeCheck();
+
+    // Timeout máximo: dejar de verificar después de 5 minutos
     const maxTimeout = setTimeout(() => {
-      console.log('⏱️ Tiempo máximo de polling automático alcanzado (2 minutos). Cambiando a verificación manual (OrderStatus).');
-      clearInterval(pollingInterval);
+      console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (OrderStatus).');
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
       setPollingStopped(true);
-    }, AUTO_POLLING_MAX_DURATION);
+    }, TOTAL_POLLING_DURATION);
 
     // Cleanup al desmontar o cambiar estado
     return () => {
-      clearInterval(pollingInterval);
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
       clearTimeout(maxTimeout);
     };
-  }, [paymentStatus, transactionId, isChecking, checkInterval, pollingStopped, pollingStartTime, checkPaymentStatus]);
+  }, [paymentStatus, transactionId, isChecking, pollingStopped, pollingStartTime, checkPaymentStatus]);
 
   // Resetear polling cuando el estado cambia de 'pending'
   useEffect(() => {
