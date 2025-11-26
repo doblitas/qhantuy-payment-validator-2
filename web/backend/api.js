@@ -1785,8 +1785,9 @@ export async function checkOrderPaymentStatus(req, res) {
 }
 
 /**
- * Periodic payment check - verifies pending payments hourly for 24 hours
+ * Periodic payment check - verifies pending payments every 10 minutes
  * This function is called by a cron job to check payments that may have been completed
+ * after the frontend polling stops (after 5 minutes)
  */
 export async function periodicPaymentCheck(req, res) {
   try {
@@ -1804,29 +1805,228 @@ export async function periodicPaymentCheck(req, res) {
 
     console.log('🔄 Starting periodic payment check...');
     
-    // Note: This is a simplified version. In a production system, you would:
-    // 1. Query a database/KV store for pending orders with QR codes
-    // 2. Check each order's payment status with Qhantuy API
-    // 3. Update Shopify if payment is confirmed
-    // 
-    // For now, this endpoint logs that it was called and can be extended
-    // to check specific orders if you maintain a list of pending orders.
+    // Importar funciones de storage
+    const { getPendingOrders, removePendingOrder, updatePendingOrderCheck } = await import('./storage.js');
     
-    // Example: If you store pending orders in KV:
-    // const kv = await getKVClient();
-    // const pendingOrders = await kv.smembers('pending_orders');
-    // for (const orderKey of pendingOrders) {
-    //   const orderData = await kv.get(orderKey);
-    //   // Check payment status and update if paid
-    // }
-
-    console.log('✅ Periodic payment check completed');
+    // Obtener todos los pedidos pendientes
+    const pendingOrders = await getPendingOrders();
+    
+    console.log(`📋 Found ${pendingOrders.length} pending orders to check`);
+    
+    if (pendingOrders.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Periodic check completed - no pending orders',
+        timestamp: new Date().toISOString(),
+        checked: 0,
+        confirmed: 0
+      });
+    }
+    
+    let checkedCount = 0;
+    let confirmedCount = 0;
+    let errorCount = 0;
+    const results = [];
+    
+    // Verificar cada pedido pendiente
+    for (const orderData of pendingOrders) {
+      const { transaction_id, internal_code, shop_domain, created_at } = orderData;
+      
+      try {
+        // Verificar que el pedido no sea muy antiguo (más de 2 horas)
+        const createdAt = new Date(created_at);
+        const now = new Date();
+        const ageInHours = (now - createdAt) / (1000 * 60 * 60);
+        
+        if (ageInHours > 2) {
+          console.log(`⏰ Order ${transaction_id} is older than 2 hours, removing from pending list`);
+          await removePendingOrder(shop_domain, transaction_id);
+          continue;
+        }
+        
+        // Actualizar tiempo de última verificación
+        await updatePendingOrderCheck(shop_domain, transaction_id);
+        
+        console.log(`🔍 Checking payment status for order:`, {
+          transaction_id,
+          internal_code,
+          shop_domain,
+          age_hours: ageInHours.toFixed(2)
+        });
+        
+        // Verificar estado del pago con Qhantuy
+        // Usar credenciales desde variables de entorno (el cron job no tiene acceso a settings de extensión)
+        const verificationResult = await verifyQhantuPayment(
+          transaction_id,
+          internal_code,
+          process.env.QHANTUY_API_URL
+        );
+        
+        checkedCount++;
+        
+        if (verificationResult.success) {
+          // El pago está confirmado, actualizar Shopify
+          console.log(`✅ Payment confirmed for order ${transaction_id}, updating Shopify...`);
+          
+          try {
+            // Obtener sesión de Shopify
+            const session = await getShopSession(shop_domain);
+            if (!session) {
+              console.error(`❌ No session found for shop ${shop_domain}`);
+              errorCount++;
+              results.push({
+                transaction_id,
+                internal_code,
+                shop_domain,
+                status: 'error',
+                message: 'No Shopify session found'
+              });
+              continue;
+            }
+            
+            // Extraer order number del internal_code
+            const orderNumber = internal_code.replace('SHOPIFY-ORDER-', '');
+            
+            // Obtener el pedido de Shopify
+            const rest = new shopify.clients.Rest({ session });
+            const ordersResponse = await rest.get({
+              path: 'orders',
+              query: { name: orderNumber, limit: 1 }
+            });
+            
+            if (!ordersResponse.body.orders || ordersResponse.body.orders.length === 0) {
+              console.warn(`⚠️ Order ${orderNumber} not found in Shopify`);
+              errorCount++;
+              results.push({
+                transaction_id,
+                internal_code,
+                shop_domain,
+                status: 'error',
+                message: 'Order not found in Shopify'
+              });
+              continue;
+            }
+            
+            const order = ordersResponse.body.orders[0];
+            
+            // Verificar si ya está pagado
+            if (order.financial_status === 'paid' || order.financial_status === 'authorized') {
+              console.log(`ℹ️ Order ${orderNumber} is already marked as paid, removing from pending list`);
+              await removePendingOrder(shop_domain, transaction_id);
+              confirmedCount++;
+              results.push({
+                transaction_id,
+                internal_code,
+                shop_domain,
+                status: 'already_paid',
+                message: 'Order was already paid'
+              });
+              continue;
+            }
+            
+            // Marcar como pagado
+            const numericOrderId = order.id;
+            const orderAmount = parseFloat(order.total_price);
+            const orderCurrency = order.currency || 'USD';
+            
+            // Crear transacción de tipo "sale"
+            const saleTransaction = await rest.post({
+              path: `orders/${numericOrderId}/transactions`,
+              data: {
+                transaction: {
+                  kind: 'sale',
+                  status: 'success',
+                  amount: orderAmount,
+                  currency: orderCurrency,
+                  gateway: 'manual',
+                  source: 'external',
+                  message: `Qhantuy QR Payment - Transaction ID: ${transaction_id} (Verified by periodic check)`
+                }
+              }
+            });
+            
+            console.log(`✅ Order ${orderNumber} marked as paid via periodic check`);
+            
+            // Actualizar tags
+            const tags = order.tags ? `${order.tags}, qhantuy-paid` : 'qhantuy-paid';
+            await rest.put({
+              path: `orders/${numericOrderId}`,
+              data: {
+                order: {
+                  id: numericOrderId,
+                  tags: tags
+                }
+              }
+            });
+            
+            // Remover de la lista de pendientes
+            await removePendingOrder(shop_domain, transaction_id);
+            
+            confirmedCount++;
+            results.push({
+              transaction_id,
+              internal_code,
+              shop_domain,
+              status: 'confirmed',
+              message: 'Payment confirmed and order updated'
+            });
+            
+          } catch (shopifyError) {
+            console.error(`❌ Error updating Shopify order ${internal_code}:`, shopifyError);
+            errorCount++;
+            results.push({
+              transaction_id,
+              internal_code,
+              shop_domain,
+              status: 'error',
+              message: `Shopify update failed: ${shopifyError.message}`
+            });
+          }
+        } else {
+          // El pago aún no está confirmado, mantener en la lista
+          console.log(`⏳ Payment still pending for order ${transaction_id}`);
+          results.push({
+            transaction_id,
+            internal_code,
+            shop_domain,
+            status: 'pending',
+            message: verificationResult.message || 'Payment still pending'
+          });
+        }
+        
+      } catch (error) {
+        console.error(`❌ Error checking order ${transaction_id}:`, error);
+        errorCount++;
+        results.push({
+          transaction_id,
+          internal_code,
+          shop_domain,
+          status: 'error',
+          message: error.message || 'Unknown error'
+        });
+      }
+    }
+    
+    console.log(`✅ Periodic payment check completed:`, {
+      total: pendingOrders.length,
+      checked: checkedCount,
+      confirmed: confirmedCount,
+      errors: errorCount,
+      still_pending: pendingOrders.length - confirmedCount - errorCount
+    });
     
     return res.status(200).json({
       success: true,
       message: 'Periodic check completed',
       timestamp: new Date().toISOString(),
-      note: 'Extend this function to check pending orders from your storage'
+      stats: {
+        total: pendingOrders.length,
+        checked: checkedCount,
+        confirmed: confirmedCount,
+        errors: errorCount,
+        still_pending: pendingOrders.length - confirmedCount - errorCount
+      },
+      results: results
     });
 
   } catch (error) {

@@ -331,6 +331,38 @@ export default async function handler(req, res) {
           process: responseData.process
         });
 
+        // Guardar pedido pendiente para verificación periódica (cron job)
+        if (responseData.transaction_id && internal_code) {
+          try {
+            const { storePendingOrder } = await import('../../web/backend/storage.js');
+            const shopDomain = req.headers['x-shopify-shop-domain'] || 
+                             req.query.shop || 
+                             req.body.shop;
+            
+            if (shopDomain) {
+              // Extraer order_number del internal_code (SHOPIFY-ORDER-{number})
+              const orderNumber = internal_code.replace('SHOPIFY-ORDER-', '');
+              
+              await storePendingOrder({
+                transaction_id: responseData.transaction_id,
+                internal_code: internal_code,
+                shop_domain: shopDomain,
+                order_number: orderNumber,
+                created_at: new Date().toISOString()
+              });
+              
+              console.log('✅ Pending order stored for periodic check:', {
+                transaction_id: responseData.transaction_id,
+                internal_code,
+                shop_domain: shopDomain
+              });
+            }
+          } catch (storageError) {
+            // No bloquear la respuesta si falla guardar para verificación periódica
+            console.warn('⚠️ Failed to store pending order for periodic check:', storageError.message);
+          }
+        }
+
         return res.status(200).json({
           success: true,
           ...responseData // Retornar toda la respuesta de Qhantuy

@@ -269,3 +269,237 @@ export async function getAllTokens() {
   return tokens;
 }
 
+/**
+ * Store pending order for periodic payment check
+ * Stores order data when QR is created
+ */
+export async function storePendingOrder(orderData) {
+  const { transaction_id, internal_code, shop_domain, order_id, order_number, created_at } = orderData;
+  
+  if (!transaction_id || !internal_code || !shop_domain) {
+    console.error('❌ Invalid parameters for storePendingOrder:', orderData);
+    throw new Error('transaction_id, internal_code, and shop_domain are required');
+  }
+  
+  const redis = await getRedisClient();
+  
+  if (!redis) {
+    console.warn('⚠️ Redis not available. Cannot store pending order for periodic check.');
+    return false;
+  }
+  
+  try {
+    // Normalizar shop domain
+    let normalizedShop = shop_domain;
+    if (normalizedShop) {
+      normalizedShop = String(normalizedShop)
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '')
+        .replace(/^www\./, '');
+      
+      if (!normalizedShop.includes('.myshopify.com')) {
+        normalizedShop = normalizedShop.includes('.') ? normalizedShop : `${normalizedShop}.myshopify.com`;
+      }
+    }
+    
+    const orderKey = `pending_order:${normalizedShop}:${transaction_id}`;
+    const orderDataToStore = {
+      transaction_id,
+      internal_code,
+      shop_domain: normalizedShop,
+      order_id: order_id || null,
+      order_number: order_number || null,
+      created_at: created_at || new Date().toISOString(),
+      last_checked: null,
+      check_count: 0
+    };
+    
+    // Guardar orden pendiente (expira después de 2 horas = 7200 segundos)
+    await redis.setex(orderKey, 7200, JSON.stringify(orderDataToStore));
+    
+    // Agregar a la lista de pedidos pendientes de esta tienda
+    const pendingListKey = `pending_orders:${normalizedShop}`;
+    await redis.sadd(pendingListKey, transaction_id);
+    // La lista también expira después de 2 horas
+    await redis.expire(pendingListKey, 7200);
+    
+    console.log(`✅ Pending order stored for periodic check: ${orderKey}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error storing pending order:', error);
+    return false;
+  }
+}
+
+/**
+ * Get all pending orders for a shop (or all shops if shop_domain is null)
+ */
+export async function getPendingOrders(shop_domain = null) {
+  const redis = await getRedisClient();
+  
+  if (!redis) {
+    console.warn('⚠️ Redis not available. Cannot retrieve pending orders.');
+    return [];
+  }
+  
+  try {
+    const pendingOrders = [];
+    
+    if (shop_domain) {
+      // Normalizar shop domain
+      let normalizedShop = shop_domain;
+      if (normalizedShop) {
+        normalizedShop = String(normalizedShop)
+          .trim()
+          .toLowerCase()
+          .replace(/^https?:\/\//, '')
+          .replace(/\/$/, '')
+          .replace(/^www\./, '');
+        
+        if (!normalizedShop.includes('.myshopify.com')) {
+          normalizedShop = normalizedShop.includes('.') ? normalizedShop : `${normalizedShop}.myshopify.com`;
+        }
+      }
+      
+      // Obtener lista de transaction_ids pendientes para esta tienda
+      const pendingListKey = `pending_orders:${normalizedShop}`;
+      const transactionIds = await redis.smembers(pendingListKey);
+      
+      // Obtener datos de cada orden pendiente
+      for (const txId of transactionIds) {
+        const orderKey = `pending_order:${normalizedShop}:${txId}`;
+        const orderDataStr = await redis.get(orderKey);
+        
+        if (orderDataStr) {
+          try {
+            const orderData = JSON.parse(orderDataStr);
+            pendingOrders.push(orderData);
+          } catch (parseError) {
+            console.warn(`⚠️ Failed to parse order data for ${orderKey}:`, parseError);
+          }
+        } else {
+          // Si la orden no existe pero está en la lista, limpiar la lista
+          await redis.srem(pendingListKey, txId);
+        }
+      }
+    } else {
+      // Obtener todas las tiendas con pedidos pendientes
+      // Buscar todas las keys que empiezan con "pending_orders:"
+      const keys = await redis.keys('pending_orders:*');
+      
+      for (const listKey of keys) {
+        const transactionIds = await redis.smembers(listKey);
+        const shopDomain = listKey.replace('pending_orders:', '');
+        
+        for (const txId of transactionIds) {
+          const orderKey = `pending_order:${shopDomain}:${txId}`;
+          const orderDataStr = await redis.get(orderKey);
+          
+          if (orderDataStr) {
+            try {
+              const orderData = JSON.parse(orderDataStr);
+              pendingOrders.push(orderData);
+            } catch (parseError) {
+              console.warn(`⚠️ Failed to parse order data for ${orderKey}:`, parseError);
+            }
+          }
+        }
+      }
+    }
+    
+    return pendingOrders;
+  } catch (error) {
+    console.error('❌ Error retrieving pending orders:', error);
+    return [];
+  }
+}
+
+/**
+ * Remove pending order (when payment is confirmed or order expires)
+ */
+export async function removePendingOrder(shop_domain, transaction_id) {
+  const redis = await getRedisClient();
+  
+  if (!redis) {
+    return false;
+  }
+  
+  try {
+    // Normalizar shop domain
+    let normalizedShop = shop_domain;
+    if (normalizedShop) {
+      normalizedShop = String(normalizedShop)
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '')
+        .replace(/^www\./, '');
+      
+      if (!normalizedShop.includes('.myshopify.com')) {
+        normalizedShop = normalizedShop.includes('.') ? normalizedShop : `${normalizedShop}.myshopify.com`;
+      }
+    }
+    
+    const orderKey = `pending_order:${normalizedShop}:${transaction_id}`;
+    const pendingListKey = `pending_orders:${normalizedShop}`;
+    
+    // Remover de la lista y eliminar la key
+    await redis.del(orderKey);
+    await redis.srem(pendingListKey, transaction_id);
+    
+    console.log(`✅ Pending order removed: ${orderKey}`);
+    return true;
+  } catch (error) {
+    console.error('❌ Error removing pending order:', error);
+    return false;
+  }
+}
+
+/**
+ * Update last checked time for a pending order
+ */
+export async function updatePendingOrderCheck(shop_domain, transaction_id) {
+  const redis = await getRedisClient();
+  
+  if (!redis) {
+    return false;
+  }
+  
+  try {
+    // Normalizar shop domain
+    let normalizedShop = shop_domain;
+    if (normalizedShop) {
+      normalizedShop = String(normalizedShop)
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/\/$/, '')
+        .replace(/^www\./, '');
+      
+      if (!normalizedShop.includes('.myshopify.com')) {
+        normalizedShop = normalizedShop.includes('.') ? normalizedShop : `${normalizedShop}.myshopify.com`;
+      }
+    }
+    
+    const orderKey = `pending_order:${normalizedShop}:${transaction_id}`;
+    const orderDataStr = await redis.get(orderKey);
+    
+    if (orderDataStr) {
+      const orderData = JSON.parse(orderDataStr);
+      orderData.last_checked = new Date().toISOString();
+      orderData.check_count = (orderData.check_count || 0) + 1;
+      
+      // Actualizar con el mismo TTL (2 horas)
+      await redis.setex(orderKey, 7200, JSON.stringify(orderData));
+      return true;
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('❌ Error updating pending order check:', error);
+    return false;
+  }
+}
+
