@@ -478,7 +478,7 @@ function QhantuPaymentValidatorOrderStatus() {
       }
       
       const { number: orderNumber, id: orderId } = getOrderIdentifiers();
-      const internalCode = `SHOPIFY-ORDER-${orderNumber || orderId || id}`;
+      const internalCode = `SHOPIFY-ORDER-${orderNumber || orderId || 'UNKNOWN'}`;
       
       // IMPORTANTE: Usar shop.domain primero (dominio real), no myshopifyDomain (puede ser ID interno)
       let shopDomain = shop?.domain || shop?.myshopifyDomain;
@@ -571,7 +571,7 @@ function QhantuPaymentValidatorOrderStatus() {
       console.error('❌ Error in checkExistingPayment:', error);
       return null;
     }
-  }, [settingsRaw, shop, getOrderIdentifiers, id]);
+  }, [settingsRaw, shop, getOrderIdentifiers]);
   
   const createQhantuCheckout = useCallback(async () => {
     if (!orderData) {
@@ -1556,8 +1556,9 @@ function QhantuPaymentValidatorOrderStatus() {
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
+      const savedCreatedAt = await storage.read('qr_created_at'); // Timestamp de cuando se creó el QR
       
-      console.log('Storage check (OrderStatus):', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
+      console.log('Storage check (OrderStatus):', { savedTxId, hasSavedQr: !!savedQr, savedStatus, savedCreatedAt });
       
       // Si el pago ya fue exitoso, restaurar desde storage
       if (savedStatus === 'success') {
@@ -1565,15 +1566,34 @@ function QhantuPaymentValidatorOrderStatus() {
         setPaymentStatus('success');
         setTransactionId(savedTxId);
         setQrData(savedQr);
+        setPollingStopped(true);
         isInitializingRef.current = false;
         isCreatingCheckoutRef.current = false;
         return;
       }
       
-      // PASO 2: Si tenemos transaction_id, usar check-debt para obtener el estado actual
+      // PASO 2: Si tenemos transaction_id, verificar si el QR expiró (más de 2 horas)
       let existingTxId = savedTxId || transactionId;
+      let qrExpired = false;
       
-      if (existingTxId) {
+      if (existingTxId && savedCreatedAt) {
+        const qrCreatedTime = new Date(savedCreatedAt).getTime();
+        const now = Date.now();
+        const ageInHours = (now - qrCreatedTime) / (1000 * 60 * 60);
+        
+        if (ageInHours > 2) {
+          console.log(`⏰ QR expired (${ageInHours.toFixed(2)} hours old). Will create new QR.`);
+          qrExpired = true;
+          // Limpiar datos del QR expirado
+          await storage.write('transaction_id', null);
+          await storage.write('qr_image', null);
+          await storage.write('qr_created_at', null);
+          existingTxId = null;
+        }
+      }
+      
+      // PASO 3: Si tenemos transaction_id válido (no expirado), usar check-debt para obtener el estado actual
+      if (existingTxId && !qrExpired) {
         console.log('🔍 Found existing transaction_id (OrderStatus):', existingTxId);
         console.log('   Using check-debt to get current payment status...');
         
@@ -1588,8 +1608,16 @@ function QhantuPaymentValidatorOrderStatus() {
           if (debtStatus.qr_image) {
             setQrData(debtStatus.qr_image);
             await storage.write('qr_image', debtStatus.qr_image);
+            // Actualizar timestamp si no existe
+            if (!savedCreatedAt) {
+              await storage.write('qr_created_at', new Date().toISOString());
+            }
           } else if (savedQr) {
             setQrData(savedQr);
+            // Actualizar timestamp si no existe
+            if (!savedCreatedAt) {
+              await storage.write('qr_created_at', new Date().toISOString());
+            }
           }
           
           // Actualizar estado según el payment_status
@@ -1620,18 +1648,26 @@ function QhantuPaymentValidatorOrderStatus() {
           isCreatingCheckoutRef.current = false;
           return;
         } else {
-          console.warn('⚠️ Could not retrieve payment status from check-debt. Transaction ID may be invalid.');
+          console.warn('⚠️ Could not retrieve payment status from check-debt. Transaction ID may be invalid or expired.');
           // Continuar para crear un nuevo checkout si no se pudo obtener el estado
         }
       }
       
-      // PASO 3: Si no hay transaction_id o no se pudo obtener el estado, crear nuevo checkout
+      // PASO 4: Si no hay transaction_id, el QR expiró, o no se pudo obtener el estado, crear nuevo checkout
       // Verificar que no estemos en un estado que ya tenga checkout
       if (paymentStatus !== 'initializing' && paymentStatus !== 'error') {
         console.log('⚠️ Payment status is not initializing (OrderStatus):', paymentStatus, '- Skipping checkout creation');
         isInitializingRef.current = false;
         isCreatingCheckoutRef.current = false;
         return;
+      }
+      
+      // Si el QR expiró, limpiar completamente y crear uno nuevo
+      if (qrExpired) {
+        console.log('🔄 QR expired, creating new checkout (OrderStatus)...');
+        await storage.write('transaction_id', null);
+        await storage.write('qr_image', null);
+        await storage.write('payment_status', null);
       }
 
       // MARCADOR: Estamos creando checkout ahora
@@ -1764,6 +1800,7 @@ function QhantuPaymentValidatorOrderStatus() {
           // Guardar en storage para persistencia (como string limpio)
           await storage.write('transaction_id', cleanTransactionId);
           await storage.write('qr_image', checkoutData.image_data);
+          await storage.write('qr_created_at', new Date().toISOString()); // Guardar timestamp de creación
           
           console.log('✅ Transaction ID saved to storage (OrderStatus):', cleanTransactionId);
           
