@@ -1207,7 +1207,8 @@ function QhantuPaymentValidatorOrderStatus() {
     
     // Formatear internal_code según la documentación: "SHOPIFY-ORDER-#{number}"
     // Priorizar number sobre id para mantener consistencia entre ThankYou y OrderStatus
-    const formattedInternalCode = number ? `SHOPIFY-ORDER-${number}` : `SHOPIFY-ORDER-${id}`;
+    // IMPORTANTE: number e id ya están disponibles desde getOrderIdentifiers() al inicio de la función
+    const formattedInternalCode = number ? `SHOPIFY-ORDER-${number}` : (id ? `SHOPIFY-ORDER-${id}` : 'SHOPIFY-ORDER-UNKNOWN');
     console.log('📝 Creando checkout con internal_code (OrderStatus):', formattedInternalCode, { number, id });
     
     // Construir detail con información del pedido
@@ -1258,7 +1259,7 @@ function QhantuPaymentValidatorOrderStatus() {
         image_method: 'URL',
         detail: detail,
         callback_url: 'https://qhantuy-payment-backend.vercel.app/api/qhantuy/callback',
-        return_url: `https://${shop.myshopifyDomain}/tools/order_status/${id}`,
+        return_url: `https://${shop.myshopifyDomain}/tools/order_status/${number || id || 'unknown'}`,
         items: items
       };
       
@@ -2393,11 +2394,13 @@ function QhantuPaymentValidatorOrderStatus() {
           setErrorMessage('El pago fue rechazado');
         } else {
           // Todavía pendiente o en otro estado
-          console.log('Payment still pending or other status (OrderStatus):', {
+          console.log('⏳ Payment still pending or other status (OrderStatus):', {
             qhantuyPaymentStatus,
             currentReactPaymentStatus: paymentStatus,
             payment
           });
+          // Mostrar mensaje informativo cuando el pago aún está pendiente
+          setErrorMessage('El pago aún no ha sido confirmado. Por favor espera unos momentos e intenta de nuevo.');
         }
       } else if (!data.process) {
         console.warn('⚠️ CONSULTA DEUDA returned process: false (OrderStatus)', data.message || data);
@@ -2405,7 +2408,7 @@ function QhantuPaymentValidatorOrderStatus() {
       } else if (paymentItems.length === 0) {
         // Si process es true pero no hay items/payments, el pago aún no ha sido procesado
         console.log('ℹ️ Payment found but not yet processed (OrderStatus). Status:', data.message || 'pending');
-        // Mantener estado pendiente
+        setErrorMessage('El pago aún no ha sido procesado. Por favor espera unos momentos e intenta de nuevo.');
       }
     } catch (error) {
       console.error('❌ Error checking payment status (OrderStatus):', error);
