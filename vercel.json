@@ -16,7 +16,7 @@
     },
     {
       "source": "/api/orders/confirm-payment",
-      "destination": "/api/orders/confirm-payment.js"
+      "destination": "/api/orders/index.js"
     },
     {
       "source": "/api/qhantuy/callback",
@@ -52,7 +52,11 @@
     },
     {
       "source": "/api/orders/save-transaction-id",
-      "destination": "/api/orders/save-transaction-id.js"
+      "destination": "/api/orders/index.js"
+    },
+    {
+      "source": "/api/orders/check-status",
+      "destination": "/api/orders/index.js"
     },
     {
       "source": "/api/orders/check-status",
