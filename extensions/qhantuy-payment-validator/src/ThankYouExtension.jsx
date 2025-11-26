@@ -2111,20 +2111,21 @@ function QhantuPaymentValidatorThankYou() {
             currentReactPaymentStatus: paymentStatus,
             payment
           });
-          // No cambiar el estado si todavía está pendiente
+          // Mostrar mensaje informativo cuando el pago aún está pendiente
+          setErrorMessage('El pago aún no ha sido confirmado. Por favor espera unos momentos e intenta de nuevo.');
         }
       } else if (!data.process) {
         // Si data.process es false, puede ser que el pedido no existe o hubo un error
         console.warn('⚠️ CONSULTA DEUDA returned process: false', data.message || data);
-        // No cambiar el estado, dejar que el usuario intente nuevamente
+        setErrorMessage(data.message || 'El pago aún no ha sido procesado. Por favor intenta de nuevo en unos momentos.');
       } else if (paymentItems.length === 0) {
         // Si process es true pero no hay items/payments, el pago aún no ha sido procesado
         console.log('ℹ️ Payment found but not yet processed. Status:', data.message || 'pending');
-        // Mantener estado pendiente
+        setErrorMessage('El pago aún no ha sido procesado. Por favor espera unos momentos e intenta de nuevo.');
       }
     } catch (error) {
       console.error('Error checking payment:', error);
-      setErrorMessage('Error al verificar el pago');
+      setErrorMessage('Error al verificar el pago. Por favor intenta de nuevo.');
     } finally {
       setIsChecking(false);
     }
@@ -2349,6 +2350,27 @@ function QhantuPaymentValidatorThankYou() {
             </BlockStack>
           </Banner>
 
+          {/* Botón de verificación manual - MOVIDO ARRIBA */}
+          {pollingStopped && (
+            <>
+              <Button onPress={checkPaymentStatus} disabled={isChecking}>
+                {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
+              </Button>
+              {/* Mostrar feedback después de verificar */}
+              {errorMessage && !isChecking && (
+                <Banner status="critical">
+                  <BlockStack spacing="tight">
+                    <Text emphasis="bold">⚠️ Pago aún no confirmado</Text>
+                    <Text size="small">{errorMessage}</Text>
+                    <Text size="small" appearance="subdued">
+                      El pago puede tardar unos minutos en procesarse. El servidor verificará automáticamente cada 10 minutos.
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              )}
+            </>
+          )}
+
           {qrData && (
             <BlockStack spacing="base" inlineAlignment="center">
               <Image source={qrData} alt="Código QR de Pago" />
@@ -2378,37 +2400,28 @@ function QhantuPaymentValidatorThankYou() {
             </BlockStack>
           </Banner>
 
-          {/* Solo mostrar botón cuando el polling se detuvo después del período automático */}
+          {/* Información sobre verificación automática del servidor */}
           {pollingStopped && (
-            <>
-              <Banner status="warning">
-                <BlockStack spacing="tight">
-                  <Text emphasis="bold">⏱️ Verificación Automática Detenida</Text>
-                  <Text size="small">
-                    La verificación automática se detuvo después de 2 minutos para evitar consultas excesivas.
-                  </Text>
-                  <Text size="small">
-                    Si ya completaste el pago, haz clic en el botón de abajo para avisar y verificar manualmente.
-                  </Text>
-                  <Text size="small" appearance="subdued">
-                    💡 El servidor continuará verificando automáticamente cada hora durante las próximas 24 horas.
-                  </Text>
-                </BlockStack>
-              </Banner>
-              <Button onPress={checkPaymentStatus} disabled={isChecking}>
-                {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
-              </Button>
-            </>
+            <Banner status="info">
+              <BlockStack spacing="tight">
+                <Text size="small">
+                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas 2 horas.
+                </Text>
+                <Text size="small" appearance="subdued">
+                  Si ya completaste el pago, puedes usar el botón de arriba para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
+                </Text>
+              </BlockStack>
+            </Banner>
           )}
 
           {!pollingStopped && (
             <Banner status="info">
               <BlockStack spacing="tight">
                 <Text size="small">
-                  💡 La verificación automática está activa. Se detendrá después de 2 minutos.
+                  💡 La verificación automática está activa. Se detendrá después de 5 minutos.
                 </Text>
                 <Text size="small">
-                  Si el pago toma más tiempo, el servidor verificará automáticamente cada hora durante 24 horas.
+                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas 2 horas.
                 </Text>
                 <Text size="small">
                   Puedes cerrar esta página y volver más tarde. Si ya pagaste, haz clic en "Avisar y verificar" cuando aparezca el botón.

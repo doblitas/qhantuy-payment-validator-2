@@ -2629,11 +2629,32 @@ function QhantuPaymentValidatorOrderStatus() {
               </Text>
               {pollingStopped && (
                 <Text size="small" appearance="subdued" style={{ marginTop: 8 }}>
-                  ⚠️ La verificación automática se detuvo después de 2 minutos. Usa el botón para verificar manualmente.
+                  ⚠️ La verificación automática se detuvo después de 5 minutos. Usa el botón para verificar manualmente.
                 </Text>
               )}
             </BlockStack>
           </Banner>
+
+          {/* Botón de verificación manual - MOVIDO ARRIBA */}
+          {pollingStopped && (
+            <>
+              <Button onPress={checkPaymentStatus} disabled={isChecking}>
+                {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
+              </Button>
+              {/* Mostrar feedback después de verificar */}
+              {errorMessage && !isChecking && (
+                <Banner status="critical">
+                  <BlockStack spacing="tight">
+                    <Text emphasis="bold">⚠️ Pago aún no confirmado</Text>
+                    <Text size="small">{errorMessage}</Text>
+                    <Text size="small" appearance="subdued">
+                      El pago puede tardar unos minutos en procesarse. El servidor verificará automáticamente cada 10 minutos.
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              )}
+            </>
+          )}
 
           {qrData && (
             <BlockStack spacing="base" inlineAlignment="center">
@@ -2664,37 +2685,28 @@ function QhantuPaymentValidatorOrderStatus() {
             </BlockStack>
           </Banner>
 
-          {/* Solo mostrar botón cuando el polling se detuvo después del período automático */}
+          {/* Información sobre verificación automática del servidor */}
           {pollingStopped && (
-            <>
-              <Banner status="warning">
-                <BlockStack spacing="tight">
-                  <Text emphasis="bold">⏱️ Verificación Automática Detenida</Text>
-                  <Text size="small">
-                    La verificación automática se detuvo después de 2 minutos para evitar consultas excesivas.
-                  </Text>
-                  <Text size="small">
-                    Si ya completaste el pago, haz clic en el botón de abajo para avisar y verificar manualmente.
-                  </Text>
-                  <Text size="small" appearance="subdued">
-                    💡 El servidor continuará verificando automáticamente cada hora durante las próximas 24 horas.
-                  </Text>
-                </BlockStack>
-              </Banner>
-              <Button onPress={checkPaymentStatus} disabled={isChecking}>
-                {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
-              </Button>
-            </>
+            <Banner status="info">
+              <BlockStack spacing="tight">
+                <Text size="small">
+                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas 2 horas.
+                </Text>
+                <Text size="small" appearance="subdued">
+                  Si ya completaste el pago, puedes usar el botón de arriba para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
+                </Text>
+              </BlockStack>
+            </Banner>
           )}
 
           {!pollingStopped && (
             <Banner status="info">
               <BlockStack spacing="tight">
                 <Text size="small">
-                  💡 La verificación automática está activa. Se detendrá después de 2 minutos.
+                  💡 La verificación automática está activa. Se detendrá después de 5 minutos.
                 </Text>
                 <Text size="small">
-                  Si el pago toma más tiempo, el servidor verificará automáticamente cada hora durante 24 horas.
+                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas 2 horas.
                 </Text>
                 <Text size="small">
                   Puedes recargar esta página en cualquier momento. Si ya pagaste, haz clic en "Avisar y verificar" cuando aparezca el botón.
