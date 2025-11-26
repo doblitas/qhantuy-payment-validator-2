@@ -1539,7 +1539,13 @@ function QhantuPaymentValidatorOrderStatus() {
             if (statusData.financial_status === 'paid') {
               console.log('✅ El pedido ya está pagado. No se necesita crear QR.');
               setPaymentStatus('success');
-              // No establecer errorMessage aquí, el estado 'success' mostrará el mensaje correcto
+              setErrorMessage(''); // Limpiar cualquier error previo
+              setPollingStopped(true); // Detener polling si ya está pagado
+              // Intentar obtener transaction_id de storage si existe
+              const savedTxId = await storage.read('transaction_id');
+              if (savedTxId) {
+                setTransactionId(savedTxId);
+              }
               isInitializingRef.current = false;
               isCreatingCheckoutRef.current = false;
               return;
