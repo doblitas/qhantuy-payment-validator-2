@@ -18,16 +18,18 @@ redirect_urls = [
   "http://localhost:3000/auth/callback"
 ]
 
-[webhooks]
-api_version = "2025-01"
-
-[[webhooks.subscriptions]]
-topics = ["orders/create"]
-uri = "/api/webhooks/orders/create"
-
-[[webhooks.subscriptions]]
-topics = ["orders/updated"]
-uri = "/api/webhooks/orders/updated"
+# Webhooks desactivados - no se están usando actualmente
+# Si necesitas webhooks en el futuro, descomenta las siguientes líneas:
+# [webhooks]
+# api_version = "2025-01"
+#
+# [[webhooks.subscriptions]]
+# topics = ["orders/create"]
+# uri = "/api/webhooks/orders/create"
+#
+# [[webhooks.subscriptions]]
+# topics = ["orders/updated"]
+# uri = "/api/webhooks/orders/updated"
 
 [pos]
 embedded = false

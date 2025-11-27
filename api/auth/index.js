@@ -7,6 +7,8 @@
  * 
  * Consolidated auth handler to stay within Vercel Hobby plan limit (12 functions)
  */
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import '../suppress-deprecation-warnings.js';
 import '@shopify/shopify-api/adapters/node';
 import { shopifyApi, ApiVersion } from '@shopify/shopify-api';
 import { restResources } from '@shopify/shopify-api/rest/admin/2024-04';

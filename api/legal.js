@@ -1,3 +1,6 @@
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import './suppress-deprecation-warnings.js';
+
 /**
  * Vercel Serverless Function
  * GET /api/privacy - Política de Privacidad

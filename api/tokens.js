@@ -1,3 +1,5 @@
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import './suppress-deprecation-warnings.js';
 import { getAccessToken, hasAccessToken } from '../web/backend/storage.js';
 
 /**

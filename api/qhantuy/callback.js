@@ -1,3 +1,5 @@
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import '../suppress-deprecation-warnings.js';
 import { handleQhantuCallback } from '../../web/backend/api.js';
 
 /**

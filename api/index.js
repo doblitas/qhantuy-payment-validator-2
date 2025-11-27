@@ -3,8 +3,24 @@
  * GET / (raíz)
  * Versión con headers correctos para Shopify embebidas
  */
+
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import './suppress-deprecation-warnings.js';
+
 export default async function handler(req, res) {
   try {
+    // Solo loggear en desarrollo para reducir ruido en producción
+    const isDevelopment = process.env.NODE_ENV === 'development' || process.env.VERCEL_ENV === 'development';
+    
+    if (isDevelopment) {
+      console.log('📥 GET / request:', {
+        shop: req.query.shop,
+        host: req.query.host,
+        userAgent: req.headers['user-agent'],
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     // Headers necesarios para apps embebidas de Shopify
     // Permiten que la app se cargue en un iframe
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -56,7 +72,9 @@ export default async function handler(req, res) {
               redis = createClient({ url: redisUrl });
               await redis.connect();
             } catch (redisError) {
-              console.warn('⚠️ Could not connect to Redis:', redisError.message);
+              if (isDevelopment) {
+                console.warn('⚠️ Could not connect to Redis:', redisError.message);
+              }
             }
           }
         }
@@ -67,7 +85,9 @@ export default async function handler(req, res) {
             const allTokenKeys = await redis.keys('shop:*:token');
             
             if (allTokenKeys.length > 0) {
-              console.log('🔍 Found registered shop tokens:', allTokenKeys.length);
+              if (isDevelopment) {
+                console.log('🔍 Found registered shop tokens:', allTokenKeys.length);
+              }
               
               // Extraer los dominios de los keys
               const registeredDomains = allTokenKeys.map(key => {
@@ -76,7 +96,9 @@ export default async function handler(req, res) {
                 return match ? match[1] : null;
               }).filter(Boolean);
               
-              console.log('📋 Registered shop domains:', registeredDomains);
+              if (isDevelopment) {
+                console.log('📋 Registered shop domains:', registeredDomains);
+              }
               
               // Si el shopDomain recibido no tiene token pero hay otros registrados
               // Y el shopDomain parece ser un ID interno (ej: e3d607.myshopify.com)
@@ -91,14 +113,18 @@ export default async function handler(req, res) {
                   // No hay token para el ID interno, usar el dominio real registrado
                   // Asumimos que el primer dominio registrado es el dominio real
                   const realDomain = registeredDomains[0];
-                  console.log('✅ Found real domain:', realDomain, '(shopDomain was internal ID:', normalizedForSearch + ')');
+                  if (isDevelopment) {
+                    console.log('✅ Found real domain:', realDomain, '(shopDomain was internal ID:', normalizedForSearch + ')');
+                  }
                   shopDomain = realDomain;
                   normalizedForSearch = realDomain;
                 }
               }
             }
           } catch (redisError) {
-            console.warn('⚠️ Could not search Redis for shop domains:', redisError.message);
+            if (isDevelopment) {
+              console.warn('⚠️ Could not search Redis for shop domains:', redisError.message);
+            }
           } finally {
             // Cerrar conexión Redis
             try {
@@ -113,7 +139,9 @@ export default async function handler(req, res) {
           }
         }
       } catch (error) {
-        console.warn('⚠️ Could not check token for shop domain:', error.message);
+        if (isDevelopment) {
+          console.warn('⚠️ Could not check token for shop domain:', error.message);
+        }
       }
       
       // Verificar estado completo usando el nuevo endpoint de checklist
@@ -125,7 +153,10 @@ export default async function handler(req, res) {
           statusCheck = await statusResponse.json();
         }
       } catch (error) {
-        console.error('Error checking status:', error);
+        // Solo loggear errores críticos en producción
+        if (isDevelopment) {
+          console.error('Error checking status:', error);
+        }
       }
       
       // Si la app está cargando como embebida, OAuth está configurado (Shopify lo validó)

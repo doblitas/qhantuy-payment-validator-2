@@ -59,6 +59,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       max_check_duration: settings.max_check_duration || settingsRaw?.max_check_duration || sharedSettings?.max_check_duration || 30,
       backend_api_url: settings.backend_api_url || settingsRaw?.backend_api_url || sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
       success_gif_url: settings.success_gif_url || settingsRaw?.success_gif_url || sharedSettings?.success_gif_url || '',
+      qr_validity_hours: settings.qr_validity_hours || settingsRaw?.qr_validity_hours || sharedSettings?.qr_validity_hours || 2,
       source: sourceExtension,
       lastConfigured: sourceExtension,
       lastUpdated: new Date().toISOString()
@@ -72,6 +73,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
       max_check_duration: sharedSettings?.max_check_duration || 30,
       backend_api_url: sharedSettings?.backend_api_url || 'https://qhantuy-payment-backend.vercel.app',
       success_gif_url: sharedSettings?.success_gif_url || '',
+      qr_validity_hours: sharedSettings?.qr_validity_hours || 2,
       source: sharedSettings?.source || 'default',
       lastConfigured: sharedSettings?.lastConfigured || null,
       lastUpdated: sharedSettings?.lastUpdated || null
@@ -90,6 +92,7 @@ export async function syncSharedSettings(settingsRaw, storage, sourceExtension =
         max_check_duration: mergedSettings.max_check_duration,
         backend_api_url: mergedSettings.backend_api_url,
         success_gif_url: mergedSettings.success_gif_url,
+        qr_validity_hours: mergedSettings.qr_validity_hours,
         lastConfigured: sourceExtension,
         lastUpdated: new Date().toISOString()
       }));
@@ -129,6 +132,7 @@ export function formatSettings(mergedSettings) {
     maxCheckDuration: (mergedSettings.max_check_duration || 30) * 60 * 1000, // Convertir a milisegundos
     backendApiUrl: backendApiUrl,
     successGifUrl: mergedSettings.success_gif_url || '',
+    qrValidityHours: mergedSettings.qr_validity_hours || 2, // Horas de validez del QR (default: 2)
     source: mergedSettings.source || 'default',
     hasConfiguredSettings: !!(mergedSettings.qhantuy_api_token && mergedSettings.qhantuy_appkey)
   };

@@ -5,8 +5,6 @@ import dotenv from 'dotenv';
 import {
   handleQhantuCallback,
   confirmPayment,
-  handleOrderCreate,
-  handleOrderUpdate,
   checkDebtStatus,
   shopify
 } from './api.js';
@@ -48,9 +46,7 @@ app.post('/api/orders/confirm-payment', confirmPayment);
 // En producción, esto se maneja en api/qhantuy/check-debt.js
 app.post('/api/qhantuy/check-debt', checkDebtStatus);
 
-// Shopify webhooks
-app.post('/api/webhooks/orders/create', handleOrderCreate);
-app.post('/api/webhooks/orders/updated', handleOrderUpdate);
+// Webhooks eliminados - no se están usando actualmente
 
 // Shopify OAuth endpoints (solo para desarrollo local)
 // En producción, esto se maneja en api/auth/callback.js y api/auth/index.js

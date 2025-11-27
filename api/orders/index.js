@@ -1,4 +1,6 @@
-import { checkOrderPaymentStatus, confirmPayment, saveTransactionId } from '../../web/backend/api.js';
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import '../suppress-deprecation-warnings.js';
+import { checkOrderPaymentStatus, confirmPayment, saveTransactionId, getOrderCustomerEmail, getOrderQrFromNotes } from '../../web/backend/api.js';
 
 /**
  * Vercel Serverless Function
@@ -43,9 +45,11 @@ export default async function handler(req, res) {
   const isCheckStatus = url.includes('/check-status');
   const isConfirmPayment = url.includes('/confirm-payment');
   const isSaveTransactionId = url.includes('/save-transaction-id');
+  const isGetCustomerEmail = url.includes('/get-customer-email');
+  const isGetQrFromNotes = url.includes('/get-qr-from-notes');
 
   // Si no se puede determinar por URL, usar el body como fallback
-  if (!isCheckStatus && !isConfirmPayment && !isSaveTransactionId) {
+  if (!isCheckStatus && !isConfirmPayment && !isSaveTransactionId && !isGetCustomerEmail && !isGetQrFromNotes) {
     // Intentar determinar por el contenido del body
     if (req.body?.order_id && req.body?.transaction_id && !req.body?.internal_code) {
       // Probablemente es confirm-payment
@@ -54,12 +58,16 @@ export default async function handler(req, res) {
       // Probablemente es save-transaction-id
       return await saveTransactionId(req, res);
     } else if (req.body?.order_id || req.body?.order_number) {
-      // Probablemente es check-status
+      // Si solo tiene order_id o order_number, puede ser check-status o get-customer-email
+      // Por defecto, intentar get-customer-email si no hay otros campos
+      if (!req.body?.financial_status && !req.body?.is_paid) {
+        return await getOrderCustomerEmail(req, res);
+      }
       return await checkOrderPaymentStatus(req, res);
     } else {
       return res.status(400).json({
         success: false,
-        message: 'Invalid operation. Use /api/orders/check-status, /api/orders/confirm-payment, or /api/orders/save-transaction-id'
+        message: 'Invalid operation. Use /api/orders/check-status, /api/orders/confirm-payment, /api/orders/save-transaction-id, or /api/orders/get-customer-email'
       });
     }
   }
@@ -71,12 +79,16 @@ export default async function handler(req, res) {
     return await confirmPayment(req, res);
   } else if (isSaveTransactionId) {
     return await saveTransactionId(req, res);
+  } else if (isGetCustomerEmail) {
+    return await getOrderCustomerEmail(req, res);
+  } else if (isGetQrFromNotes) {
+    return await getOrderQrFromNotes(req, res);
   }
 
   // Si no se pudo determinar la operación
   return res.status(400).json({
     success: false,
-    message: 'Invalid operation. Use /api/orders/check-status, /api/orders/confirm-payment, or /api/orders/save-transaction-id'
+    message: 'Invalid operation. Use /api/orders/check-status, /api/orders/confirm-payment, /api/orders/save-transaction-id, or /api/orders/get-customer-email'
   });
 }
 

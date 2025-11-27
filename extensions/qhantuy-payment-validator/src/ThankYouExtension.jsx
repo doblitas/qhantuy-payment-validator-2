@@ -49,6 +49,7 @@ function QhantuPaymentValidatorThankYou() {
   const [qrData, setQrData] = useState(null);
   const [transactionId, setTransactionId] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [hasClickedManual, setHasClickedManual] = useState(false); // Rastrear si el usuario hizo clic manualmente
   const [isChecking, setIsChecking] = useState(false);
   const [pollingStopped, setPollingStopped] = useState(false);
   const [pollingStartTime, setPollingStartTime] = useState(null);
@@ -60,6 +61,10 @@ function QhantuPaymentValidatorThankYou() {
   const retryAttemptRef = useRef(0);
   const isInitializingRef = useRef(false);
   const isCreatingCheckoutRef = useRef(false); // Prevenir creación duplicada de checkout
+  const pollingIntervalRef = useRef(null); // Ref para almacenar el ID del intervalo de polling
+  const pollingMaxTimeoutRef = useRef(null); // Ref para almacenar el timeout máximo
+  const checkPaymentStatusRef = useRef(null); // Ref para almacenar la función checkPaymentStatus más reciente
+  const isPollingActiveRef = useRef(false); // Flag para prevenir múltiples intervalos
   
   // Configuración de reintentos y timeouts
   const MAX_RETRIES = 10; // Máximo número de reintentos
@@ -1092,29 +1097,95 @@ function QhantuPaymentValidatorThankYou() {
       }
       
       // VALIDACIÓN: No usar valores dummy si no tenemos datos reales
-      // Si no tenemos email real, no crear checkout (es requerido)
-      if (!customerEmail || customerEmail === 'cliente@tienda.com') {
-        console.error('❌ No se pudo obtener el email del cliente. No se puede crear checkout.');
-        console.error('   Fuentes consultadas:', {
+      // Si no tenemos email real, intentar obtenerlo desde el backend
+      let finalCustomerEmail = customerEmail;
+      // Declarar variables para datos del backend (fuera del if para que estén en scope)
+      let backendFirstName = null;
+      let backendLastName = null;
+      
+      if (!finalCustomerEmail || finalCustomerEmail === 'cliente@tienda.com') {
+        console.warn('⚠️ No se pudo obtener el email del cliente desde el frontend. Intentando obtenerlo desde el backend...');
+        console.warn('   Fuentes consultadas:', {
           orderCustomerEmail: order?.customer?.email,
           orderDirectEmail: order?.email,
           actualOrderCustomerEmail: actualOrder?.customer?.email,
           purchaseCustomer: purchase?.customer?.email,
           apiContact: api?.contact?.email
         });
-        return {
-          process: false,
-          message: 'Error: No se pudo obtener el email del cliente desde Shopify. Por favor contacta a soporte.'
-        };
+        
+        // Intentar obtener el email desde el backend consultando la orden de Shopify
+        try {
+          const { id: orderId, number: orderNumber } = getOrderIdentifiers();
+          const shopDomain = shop?.domain || shop?.myshopifyDomain;
+          
+          if (orderId || orderNumber) {
+            const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+            const getEmailUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/get-customer-email`;
+            
+            console.log('📧 Fetching customer email from backend:', {
+              orderId,
+              orderNumber,
+              shopDomain,
+              url: getEmailUrl
+            });
+            
+            const emailResponse = await fetch(getEmailUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Shop-Domain': shopDomain || ''
+              },
+              body: JSON.stringify({
+                order_id: orderId,
+                order_number: orderNumber,
+                shop: shopDomain
+              })
+            });
+            
+            if (emailResponse.ok) {
+              const emailData = await emailResponse.json();
+              if (emailData.success && emailData.customer_email) {
+                finalCustomerEmail = emailData.customer_email;
+                console.log('✅ Email obtenido desde el backend:', finalCustomerEmail);
+                
+                // Guardar firstName y lastName del backend si están disponibles
+                if (emailData.customer_first_name) {
+                  backendFirstName = emailData.customer_first_name;
+                }
+                if (emailData.customer_last_name) {
+                  backendLastName = emailData.customer_last_name;
+                }
+              } else {
+                console.warn('⚠️ Backend no retornó email válido:', emailData);
+              }
+            } else {
+              const errorText = await emailResponse.text();
+              console.warn('⚠️ Error al obtener email desde backend:', emailResponse.status, errorText);
+            }
+          }
+        } catch (emailError) {
+          console.error('❌ Error al intentar obtener email desde backend:', emailError);
+        }
+        
+        // Si aún no tenemos email, retornar error
+        if (!finalCustomerEmail || finalCustomerEmail === 'cliente@tienda.com') {
+          console.error('❌ No se pudo obtener el email del cliente ni desde frontend ni desde backend.');
+          const { number } = getOrderIdentifiers();
+          return {
+            process: false,
+            message: `Error: No se pudo obtener el email del cliente desde Shopify. Por favor contacta a soporte.\n\nPor favor contacta a soporte con tu número de orden: #${number || 'N/A'}`
+          };
+        }
       }
       
       // Si no tenemos nombre, usar email como fallback (mejor que "Cliente")
-      const finalFirstName = firstName || customerEmail.split('@')[0] || 'Cliente';
-      const finalLastName = lastName || '';
+      // Priorizar: backend > frontend > email prefix
+      const finalFirstName = backendFirstName || firstName || finalCustomerEmail.split('@')[0] || 'Cliente';
+      const finalLastName = backendLastName || lastName || '';
       
       const requestBody = {
         appkey: appkey,
-        customer_email: customerEmail, // Ya validado arriba
+        customer_email: finalCustomerEmail, // Ya validado arriba (puede venir del backend)
         customer_first_name: finalFirstName,
         customer_last_name: finalLastName,
         currency_code: currencyCode,
@@ -1222,7 +1293,8 @@ function QhantuPaymentValidatorThankYou() {
             detail: requestBody.detail,
             callback_url: requestBody.callback_url,
             return_url: requestBody.return_url,
-            items: requestBody.items
+            items: requestBody.items,
+            qr_validity_hours: formattedSettings.qrValidityHours || 2 // Horas de validez del QR
           }),
           signal: controller.signal
         });
@@ -1369,27 +1441,57 @@ function QhantuPaymentValidatorThankYou() {
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
+      const savedOrderNumber = await storage.read('order_number'); // CRÍTICO: Verificar que el transaction_id corresponde a este pedido
       
-      console.log('Storage check:', { savedTxId, hasSavedQr: !!savedQr, savedStatus });
+      // CRÍTICO: Verificar que el transaction_id del storage corresponde al pedido actual
+      const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
+      const currentOrderNumber = confirmationNumber || orderNumber || orderId;
       
-      if (savedStatus === 'success') {
-        console.log('✅ Payment already successful, restoring from storage...');
-        setPaymentStatus('success');
-        setTransactionId(savedTxId);
-        setQrData(savedQr);
-        isInitializingRef.current = false;
-        isCreatingCheckoutRef.current = false;
-        return;
-      }
-      
-      if (savedTxId && savedQr) {
-        console.log('✅ Restored checkout from storage:', savedTxId);
-        setTransactionId(savedTxId);
-        setQrData(savedQr);
-        setPaymentStatus('pending');
-        isInitializingRef.current = false;
-        isCreatingCheckoutRef.current = false;
-        return;
+      // Si el order_number no coincide, limpiar el storage y no usar los datos guardados
+      if (savedTxId && savedOrderNumber && savedOrderNumber !== currentOrderNumber) {
+        console.warn('⚠️⚠️⚠️ CRITICAL: Transaction ID in storage belongs to different order! ⚠️⚠️⚠️');
+        console.warn('   Saved order number:', savedOrderNumber);
+        console.warn('   Current order number:', currentOrderNumber);
+        console.warn('   Saved transaction_id:', savedTxId);
+        console.warn('   Clearing storage and will create new checkout...');
+        
+        // Limpiar storage porque pertenece a otro pedido
+        await storage.write('transaction_id', null);
+        await storage.write('qr_image', null);
+        await storage.write('payment_status', null);
+        await storage.write('qr_created_at', null);
+        await storage.write('order_number', null);
+        
+        // Continuar para crear un nuevo checkout
+      } else {
+        console.log('Storage check:', { 
+          savedTxId, 
+          savedOrderNumber,
+          currentOrderNumber,
+          orderMatches: savedOrderNumber === currentOrderNumber,
+          hasSavedQr: !!savedQr, 
+          savedStatus 
+        });
+        
+        if (savedStatus === 'success' && savedOrderNumber === currentOrderNumber) {
+          console.log('✅ Payment already successful, restoring from storage...');
+          setPaymentStatus('success');
+          setTransactionId(savedTxId);
+          setQrData(savedQr);
+          isInitializingRef.current = false;
+          isCreatingCheckoutRef.current = false;
+          return;
+        }
+        
+        if (savedTxId && savedQr && savedOrderNumber === currentOrderNumber) {
+          console.log('✅ Restored checkout from storage:', savedTxId);
+          setTransactionId(savedTxId);
+          setQrData(savedQr);
+          setPaymentStatus('pending');
+          isInitializingRef.current = false;
+          isCreatingCheckoutRef.current = false;
+          return;
+        }
       }
 
       // Verificar estado actual ANTES de crear checkout
@@ -1533,8 +1635,28 @@ function QhantuPaymentValidatorThankYou() {
           setQrData(checkoutData.image_data);
           
           // Guardar en storage para persistencia (como string limpio)
+          console.log('💾 Saving to storage (ThankYou):', {
+            transaction_id: cleanTransactionId,
+            qr_image_length: checkoutData.image_data ? checkoutData.image_data.length : 0,
+            qr_image_preview: checkoutData.image_data ? checkoutData.image_data.substring(0, 50) + '...' : null
+          });
+          
+          // CRÍTICO: Guardar también el order_number para verificar que el transaction_id corresponde al pedido correcto
+          const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
+          const currentOrderNumber = confirmationNumber || orderNumber || orderId;
           await storage.write('transaction_id', cleanTransactionId);
+          await storage.write('order_number', currentOrderNumber); // CRÍTICO: Guardar order_number
           await storage.write('qr_image', checkoutData.image_data);
+          await storage.write('qr_created_at', new Date().toISOString());
+          
+          // Verificar que se guardó correctamente
+          const verifyTxId = await storage.read('transaction_id');
+          const verifyQr = await storage.read('qr_image');
+          console.log('✅ Storage verification (ThankYou):', {
+            transaction_id_saved: verifyTxId === cleanTransactionId,
+            qr_image_saved: !!verifyQr,
+            qr_image_length: verifyQr ? verifyQr.length : 0
+          });
           
           console.log('✅ Transaction ID saved to storage:', cleanTransactionId);
           
@@ -1585,12 +1707,14 @@ function QhantuPaymentValidatorThankYou() {
             if (orderId || primaryIdentifier) {
               const apiEndpointUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/save-transaction-id`;
               
-              console.log('💾 Saving transaction ID to Shopify order (ThankYou):', { 
+              console.log('💾 Saving transaction ID and QR to Shopify order (ThankYou):', { 
                 orderId, 
                 orderNumber: orderNum,
                 confirmationNumber,
                 primaryIdentifier,
                 transactionId: cleanTransactionId,
+                qrImageUrl: checkoutData.image_data,
+                qrImageLength: checkoutData.image_data ? checkoutData.image_data.length : 0,
                 shopDomain 
               });
               
@@ -1604,7 +1728,8 @@ function QhantuPaymentValidatorThankYou() {
                   order_id: orderId || primaryIdentifier,
                   transaction_id: cleanTransactionId,
                   internal_code: internalCode, // Usar el internal_code calculado arriba
-                  confirmation_number: confirmationNumber || null // Enviar confirmation_number si está disponible
+                  confirmation_number: confirmationNumber || null, // Enviar confirmation_number si está disponible
+                  qr_image_url: checkoutData.image_data || null // Guardar QR URL en las notas del pedido
                 })
               });
               
@@ -1772,16 +1897,81 @@ function QhantuPaymentValidatorThankYou() {
   }, [isLoading, orderData, totalAmount, cost, missingConfig, paymentStatus, attemptCheckoutCreation, hasRequiredOrderData]);
   
   // Función para verificar el estado del pago
-  const checkPaymentStatus = useCallback(async () => {
+  const checkPaymentStatus = useCallback(async (isManualCheck = false) => {
+    // Si es verificación manual, marcar que el usuario hizo clic
+    if (isManualCheck) {
+      setHasClickedManual(true);
+      setErrorMessage(''); // Limpiar error previo al hacer verificación manual
+    }
+    
+    // Actualizar la ref con la función más reciente
+    checkPaymentStatusRef.current = checkPaymentStatus;
+    
+    // CRÍTICO: Obtener order_number actual para verificar que el transaction_id corresponde a este pedido
+    const { number: orderNumber, id: orderId, confirmationNumber } = getOrderIdentifiers();
+    const currentOrderNumber = confirmationNumber || orderNumber || orderId;
+    
     // Obtener transactionId del estado o del storage (priorizar estado actual)
     let txId = transactionId;
     
     // Si no hay transactionId en estado, intentar obtenerlo de storage
+    // PERO SOLO si pertenece al pedido actual
     if (!txId) {
       const savedTxId = await storage.read('transaction_id');
+      const savedOrderNumber = await storage.read('order_number');
+      
+      // CRÍTICO: Solo usar transaction_id del storage si pertenece al pedido actual
       if (savedTxId) {
-        txId = savedTxId;
-        console.log('ℹ️ Transaction ID obtenido de storage:', txId);
+        if (savedOrderNumber === currentOrderNumber) {
+          txId = savedTxId;
+          console.log('ℹ️ Transaction ID obtenido de storage (ThankYou):', txId, 'for order:', currentOrderNumber);
+        } else {
+          console.warn('⚠️⚠️⚠️ CRITICAL: Transaction ID in storage belongs to different order! ⚠️⚠️⚠️');
+          console.warn('   Saved order number:', savedOrderNumber);
+          console.warn('   Current order number:', currentOrderNumber);
+          console.warn('   Saved transaction_id:', savedTxId);
+          console.warn('   NOT using saved transaction_id, will get from Shopify order notes...');
+          
+          // Intentar obtener el transaction_id correcto desde Shopify order notes
+          try {
+            const shopDomain = shop?.domain || shop?.myshopifyDomain;
+            if (currentOrderNumber && shopDomain) {
+              const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+              const getQrUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/get-qr-from-notes`;
+              
+              const qrResponse = await fetch(getQrUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Shopify-Shop-Domain': shopDomain
+                },
+                body: JSON.stringify({
+                  order_id: orderId,
+                  order_number: orderNumber,
+                  shop: shopDomain,
+                  qr_validity_hours: formattedSettings.qrValidityHours || 2 // Horas de validez del QR
+                })
+              });
+              
+              if (qrResponse.ok) {
+                const qrData = await qrResponse.json();
+                if (qrData.success && qrData.transaction_id) {
+                  txId = qrData.transaction_id;
+                  console.log('✅✅✅ Found correct transaction_id from Shopify order notes! ✅✅✅');
+                  console.log('   Transaction ID:', txId);
+                  console.log('   Order Number:', currentOrderNumber);
+                  
+                  // Actualizar storage con el transaction_id correcto
+                  await storage.write('transaction_id', txId);
+                  await storage.write('order_number', currentOrderNumber);
+                  setTransactionId(txId);
+                }
+              }
+            }
+          } catch (error) {
+            console.warn('⚠️ Could not get transaction_id from Shopify order notes:', error);
+          }
+        }
       }
     }
     
@@ -1848,26 +2038,26 @@ function QhantuPaymentValidatorThankYou() {
         }
       }
       
-      // Normalizar backendApiUrl para evitar URLs duplicadas
-      let backendApiUrl = formattedSettings.backendApiUrl;
-      
-      // Limpiar backendApiUrl: remover cualquier path que no sea la base URL
-      if (backendApiUrl) {
-        // Remover protocolo para trabajar solo con el dominio
-        const urlObj = new URL(backendApiUrl);
-        backendApiUrl = `${urlObj.protocol}//${urlObj.host}`;
-        console.log('📋 Normalized backendApiUrl:', backendApiUrl);
-      }
-      
-      // Usar el servicio CONSULTA DE DEUDA para verificar el estado del pago
-      // Según documentación: endpoint /check-payments requiere payment_ids (array de transaction IDs)
-      // Enviar transaction_id directamente (preferido) según documentación
-      console.log('🔍 Consultando CONSULTA DE DEUDA con transaction_id:', cleanTxId, {
+      // Verificar el estado del pago consultando Qhantuy
+      // NO simular callback, solo verificar el estado real del pago
+      console.log('🔍 Verificando estado del pago con transaction_id (ThankYou):', cleanTxId, {
         orderNumber,
         orderId,
         transactionId: cleanTxId,
         note: '✅ Using transaction_id as per Qhantuy documentation'
       });
+      
+      // Normalizar backendApiUrl para evitar URLs duplicadas
+      let backendApiUrl = formattedSettings.backendApiUrl;
+      if (backendApiUrl) {
+        try {
+          const urlObj = new URL(backendApiUrl);
+          backendApiUrl = `${urlObj.protocol}//${urlObj.host}`;
+          console.log('📋 Normalized backendApiUrl:', backendApiUrl);
+        } catch (error) {
+          console.warn('⚠️ Could not parse backendApiUrl, using as-is:', backendApiUrl);
+        }
+      }
       
       // Construir la URL completa del endpoint (asegurarse de que no tenga paths duplicados)
       const checkDebtUrl = `${backendApiUrl.replace(/\/$/, '')}/api/qhantuy/check-debt`;
@@ -1896,6 +2086,22 @@ function QhantuPaymentValidatorThankYou() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('❌ Backend error:', response.status, response.statusText, errorText);
+        
+        // Manejar error 429 (Too Many Requests) específicamente
+        if (response.status === 429) {
+          console.warn('⚠️ Rate limit alcanzado (429). Pausando polling temporalmente...');
+          setErrorMessage('Demasiadas solicitudes. Esperando antes de verificar nuevamente...');
+          // Pausar polling por 60 segundos cuando hay 429
+          setPollingStopped(true);
+          setTimeout(() => {
+            console.log('🔄 Reanudando polling después de pausa por 429...');
+            setPollingStopped(false);
+            setPollingStartTime(null); // Resetear para reiniciar intervalos
+          }, 60 * 1000); // Esperar 60 segundos
+          setIsChecking(false);
+          return;
+        }
+        
         setErrorMessage('Error al verificar el pago. Por favor intenta de nuevo.');
         setIsChecking(false);
         return;
@@ -1907,6 +2113,22 @@ function QhantuPaymentValidatorThankYou() {
       // El backend envuelve la respuesta de Qhantuy en { success: true, data: ... }
       if (!backendResponse.success || !backendResponse.data) {
         console.error('❌ Backend returned error en check-debt:', backendResponse.message || 'Unknown error');
+        
+        // Manejar error 429 (Too Many Requests) específicamente
+        if (backendResponse.status === 429 || backendResponse.message?.includes('429') || backendResponse.message?.includes('Too Many Requests')) {
+          console.warn('⚠️ Rate limit alcanzado (429). Pausando polling temporalmente...');
+          setErrorMessage('Demasiadas solicitudes. Esperando antes de verificar nuevamente...');
+          // Pausar polling por 60 segundos cuando hay 429
+          setPollingStopped(true);
+          setTimeout(() => {
+            console.log('🔄 Reanudando polling después de pausa por 429...');
+            setPollingStopped(false);
+            setPollingStartTime(null); // Resetear para reiniciar intervalos
+          }, 60 * 1000); // Esperar 60 segundos
+          setIsChecking(false);
+          return;
+        }
+        
         setErrorMessage(backendResponse.message || 'Error al verificar el pago');
         setIsChecking(false);
         return;
@@ -2131,26 +2353,71 @@ function QhantuPaymentValidatorThankYou() {
     }
   }, [transactionId, storage, isChecking, getOrderIdentifiers, shop, formattedSettings]);
   
+  // Actualizar la ref cuando checkPaymentStatus cambia
+  useEffect(() => {
+    checkPaymentStatusRef.current = checkPaymentStatus;
+  }, [checkPaymentStatus]);
+
   // Polling automático: verificar el estado del pago con intervalos dinámicos
-  // - Primeros 2 minutos: cada 5 segundos
-  // - Después (hasta 5 minutos): cada 30 segundos
+  // - Primeros 2 minutos: cada 15 segundos
+  // - Después (hasta 5 minutos): cada 45 segundos
   // - Después de 5 minutos: el backend hace verificaciones cada 10 minutos
   useEffect(() => {
+    // CRÍTICO: Verificar primero si ya hay un polling activo ANTES de hacer cualquier cosa
+    // Usar una verificación más estricta con doble check
+    if (isPollingActiveRef.current) {
+      if (pollingIntervalRef.current) {
+        console.log('🚫 Polling ya está activo (interval exists), ignorando nueva ejecución del useEffect (ThankYou)');
+        return;
+      } else {
+        // Si el flag está activo pero no hay intervalo, resetear el flag (puede ser un estado inconsistente)
+        console.log('⚠️ Polling flag activo pero sin intervalo, reseteando flag (ThankYou)');
+        isPollingActiveRef.current = false;
+      }
+    }
+    
     // Solo hacer polling si:
     // 1. El estado es 'pending' (pago pendiente)
     // 2. Tenemos un transactionId
     // 3. No estamos verificando actualmente
     // 4. El polling no ha sido detenido
     if (paymentStatus !== 'pending' || !transactionId || isChecking || pollingStopped) {
+      // Si no debemos hacer polling, limpiar cualquier intervalo existente
+      if (pollingIntervalRef.current) {
+        console.log('🧹 Limpiando intervalo porque condiciones no se cumplen (ThankYou)');
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (pollingMaxTimeoutRef.current) {
+        clearTimeout(pollingMaxTimeoutRef.current);
+        pollingMaxTimeoutRef.current = null;
+      }
+      isPollingActiveRef.current = false;
       return;
     }
+    
+    // CRÍTICO: Establecer el flag ANTES de cualquier operación async para prevenir race conditions
+    // Esto previene que múltiples ejecuciones del useEffect pasen este punto simultáneamente
+    isPollingActiveRef.current = true;
+    
+    // CRÍTICO: Limpiar cualquier intervalo anterior antes de crear uno nuevo
+    if (pollingIntervalRef.current) {
+      console.log('🧹 Limpiando intervalo de polling anterior (ThankYou)');
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    if (pollingMaxTimeoutRef.current) {
+      clearTimeout(pollingMaxTimeoutRef.current);
+      pollingMaxTimeoutRef.current = null;
+    }
+    
+    // Marcar que el polling está activo ANTES de crear el intervalo
+    isPollingActiveRef.current = true;
 
     // Intervalos según el tiempo transcurrido
-    const FAST_INTERVAL = 5 * 1000; // 5 segundos para los primeros 2 minutos
-    const SLOW_INTERVAL = 30 * 1000; // 30 segundos después de 2 minutos
-    const FAST_PHASE_DURATION = 2 * 60 * 1000; // 2 minutos
-    const SLOW_PHASE_DURATION = 5 * 60 * 1000; // 5 minutos total
-    const TOTAL_POLLING_DURATION = SLOW_PHASE_DURATION; // 5 minutos total
+    // Revisar cada 15 segundos durante los 5 minutos completos
+    const POLLING_INTERVAL = 15 * 1000; // 15 segundos = 15000 milisegundos
+    const TOTAL_POLLING_DURATION = 5 * 60 * 1000; // 5 minutos = 300000 milisegundos
 
     // Guardar tiempo de inicio si es la primera vez
     if (!pollingStartTime) {
@@ -2158,80 +2425,77 @@ function QhantuPaymentValidatorThankYou() {
     }
 
     console.log('🔄 Iniciando polling automático (ThankYou):');
-    console.log('   - Primeros 2 minutos: cada 5 segundos');
-    console.log('   - Después (hasta 5 minutos): cada 30 segundos');
+    console.log('   - Durante 5 minutos: cada 15 segundos (15000 ms)');
     console.log('   - Después de 5 minutos: el backend verificará cada 10 minutos');
+    console.log('   - Intervalo: ' + POLLING_INTERVAL + 'ms');
 
     let pollingAttempts = 0;
-    let currentInterval = FAST_INTERVAL;
-    let intervalId = null;
-
-    // Función para determinar el intervalo actual según el tiempo transcurrido
-    const getCurrentInterval = (elapsed) => {
-      if (elapsed < FAST_PHASE_DURATION) {
-        return FAST_INTERVAL; // Primeros 2 minutos: cada 5 segundos
-      } else if (elapsed < SLOW_PHASE_DURATION) {
-        return SLOW_INTERVAL; // Después: cada 30 segundos hasta 5 minutos
-      }
-      return null; // Después de 5 minutos, el backend se encarga
-    };
 
     // Función para ejecutar la verificación
     const executeCheck = () => {
+      // Verificar que aún debemos hacer polling
+      if (paymentStatus !== 'pending' || !transactionId || isChecking || pollingStopped) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        return;
+      }
+      
       pollingAttempts++;
       const elapsed = Date.now() - (pollingStartTime || Date.now());
       
       // Detener si hemos alcanzado el tiempo máximo (5 minutos)
       if (elapsed >= TOTAL_POLLING_DURATION) {
         console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (ThankYou).');
-        if (intervalId) {
-          clearInterval(intervalId);
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
         setPollingStopped(true);
         return;
       }
 
-      // Verificar si necesitamos cambiar el intervalo
-      const newInterval = getCurrentInterval(elapsed);
-      if (newInterval && newInterval !== currentInterval) {
-        console.log(`🔄 Cambiando intervalo de polling: ${currentInterval / 1000}s -> ${newInterval / 1000}s (ThankYou)`);
-        currentInterval = newInterval;
-        if (intervalId) {
-          clearInterval(intervalId);
-        }
-        // Reiniciar el intervalo con el nuevo valor
-        intervalId = setInterval(executeCheck, currentInterval);
+      console.log(`🔄 Polling automático [15s] (${pollingAttempts}) (ThankYou): verificando estado del pago...`);
+      // Usar la ref para acceder a la función más reciente sin causar re-renders
+      if (checkPaymentStatusRef.current) {
+        checkPaymentStatusRef.current();
       }
-
-      const phase = elapsed < FAST_PHASE_DURATION ? 'FAST (5s)' : 'SLOW (30s)';
-      console.log(`🔄 Polling automático [${phase}] (${pollingAttempts}) (ThankYou): verificando estado del pago...`);
-      checkPaymentStatus();
     };
 
-    // Iniciar con el intervalo rápido
-    currentInterval = FAST_INTERVAL;
-    intervalId = setInterval(executeCheck, currentInterval);
+    // Iniciar con el intervalo de 15 segundos
+    pollingIntervalRef.current = setInterval(executeCheck, POLLING_INTERVAL);
 
-    // Ejecutar primera verificación inmediatamente
-    executeCheck();
+    // CRÍTICO: NO ejecutar executeCheck() inmediatamente aquí
+    // Esto causaba múltiples ejecuciones casi simultáneas
+    // El intervalo se ejecutará automáticamente después del primer intervalo (15 segundos)
+    // Si necesitas una verificación inmediata, hazla fuera del useEffect o con un setTimeout separado
+    console.log('⏱️ Polling iniciado. Primera verificación en 15 segundos (ThankYou)');
 
     // Timeout máximo: dejar de verificar después de 5 minutos
-    const maxTimeout = setTimeout(() => {
+    pollingMaxTimeoutRef.current = setTimeout(() => {
       console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (ThankYou).');
-      if (intervalId) {
-        clearInterval(intervalId);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
       setPollingStopped(true);
     }, TOTAL_POLLING_DURATION);
 
     // Cleanup al desmontar o cambiar estado
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
+      console.log('🧹 Cleanup: Limpiando intervalos de polling (ThankYou)');
+      isPollingActiveRef.current = false;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
-      clearTimeout(maxTimeout);
+      if (pollingMaxTimeoutRef.current) {
+        clearTimeout(pollingMaxTimeoutRef.current);
+        pollingMaxTimeoutRef.current = null;
+      }
     };
-  }, [paymentStatus, transactionId, isChecking, pollingStopped, pollingStartTime, checkPaymentStatus]);
+  }, [paymentStatus, transactionId, isChecking, pollingStopped]); // Removido checkPaymentStatus y pollingStartTime de dependencias
 
   // Resetear polling cuando el estado cambia de 'pending'
   useEffect(() => {
@@ -2350,14 +2614,23 @@ function QhantuPaymentValidatorThankYou() {
             </BlockStack>
           </Banner>
 
-          {/* Botón de verificación manual - MOVIDO ARRIBA */}
+          {qrData && (
+            <BlockStack spacing="base" inlineAlignment="center">
+              <Image source={qrData} alt="Código QR de Pago" />
+              <Text size="small" appearance="subdued">
+                Transacción: {transactionId}
+              </Text>
+            </BlockStack>
+          )}
+
+          {/* Botón de verificación manual - Debajo del QR */}
           {pollingStopped && (
             <>
-              <Button onPress={checkPaymentStatus} disabled={isChecking}>
+              <Button onPress={() => checkPaymentStatus(true)} disabled={isChecking}>
                 {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
               </Button>
-              {/* Mostrar feedback después de verificar */}
-              {errorMessage && !isChecking && (
+              {/* Mostrar feedback SOLO después de que el usuario haya hecho clic manualmente */}
+              {errorMessage && !isChecking && hasClickedManual && (
                 <Banner status="critical">
                   <BlockStack spacing="tight">
                     <Text emphasis="bold">⚠️ Pago aún no confirmado</Text>
@@ -2369,15 +2642,6 @@ function QhantuPaymentValidatorThankYou() {
                 </Banner>
               )}
             </>
-          )}
-
-          {qrData && (
-            <BlockStack spacing="base" inlineAlignment="center">
-              <Image source={qrData} alt="Código QR de Pago" />
-              <Text size="small" appearance="subdued">
-                Transacción: {transactionId}
-              </Text>
-            </BlockStack>
           )}
 
           <Banner status="info">
@@ -2405,10 +2669,10 @@ function QhantuPaymentValidatorThankYou() {
             <Banner status="info">
               <BlockStack spacing="tight">
                 <Text size="small">
-                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas 2 horas.
+                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas {formattedSettings.qrValidityHours || 2} horas.
                 </Text>
                 <Text size="small" appearance="subdued">
-                  Si ya completaste el pago, puedes usar el botón de arriba para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
+                  Si ya completaste el pago, puedes usar el botón de abajo para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
                 </Text>
               </BlockStack>
             </Banner>
@@ -2421,7 +2685,7 @@ function QhantuPaymentValidatorThankYou() {
                   💡 La verificación automática está activa. Se detendrá después de 5 minutos.
                 </Text>
                 <Text size="small">
-                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas 2 horas.
+                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas {formattedSettings.qrValidityHours || 2} horas.
                 </Text>
                 <Text size="small">
                   Puedes cerrar esta página y volver más tarde. Si ya pagaste, haz clic en "Avisar y verificar" cuando aparezca el botón.

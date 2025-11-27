@@ -59,6 +59,14 @@
       "destination": "/api/orders/index.js"
     },
     {
+      "source": "/api/orders/get-customer-email",
+      "destination": "/api/orders/index.js"
+    },
+    {
+      "source": "/api/orders/get-qr-from-notes",
+      "destination": "/api/orders/index.js"
+    },
+    {
       "source": "/api/orders/check-status",
       "destination": "/api/orders/check-status.js"
     },
@@ -89,14 +97,6 @@
     {
       "source": "/api/tokens",
       "destination": "/api/tokens.js"
-    },
-    {
-      "source": "/api/webhooks/orders/create",
-      "destination": "/api/webhooks/orders/index.js"
-    },
-    {
-      "source": "/api/webhooks/orders/updated",
-      "destination": "/api/webhooks/orders/index.js"
     },
     {
       "source": "/api/qhantuy/periodic-check",

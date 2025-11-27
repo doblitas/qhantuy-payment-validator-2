@@ -204,35 +204,52 @@ export async function handleQhantuCallback(req, res) {
     if (!shopDomain && internal_code) {
       console.log('⚠️  Shop domain not provided in callback. Attempting to find shop from internal_code...');
       // Extract order number from internal_code
-      // Validar que el internal_code tenga el formato esperado
+      // SECURITY: Validate and sanitize internal_code to prevent injection attacks
       let orderNumber;
       if (internal_code && typeof internal_code === 'string') {
-        if (internal_code.startsWith('SHOPIFY-ORDER-')) {
-          orderNumber = internal_code.replace('SHOPIFY-ORDER-', '').trim();
-          // Validar que el orderNumber sea numérico o alfanumérico válido
-          if (!orderNumber || orderNumber.length === 0) {
-            console.error('❌ Invalid internal_code format: order number is empty after removing prefix');
+        // SECURITY: Sanitize internal_code - remove any potentially dangerous characters
+        const sanitizedInternalCode = internal_code.trim();
+        
+        // Validate format: must start with SHOPIFY-ORDER- or be a valid order identifier
+        if (sanitizedInternalCode.startsWith('SHOPIFY-ORDER-')) {
+          orderNumber = sanitizedInternalCode.replace('SHOPIFY-ORDER-', '').trim();
+          
+          // SECURITY: Validate order number format - only alphanumeric and common Shopify order name characters
+          // Shopify order names are typically alphanumeric (e.g., #1001, JI117296, etc.)
+          // Allow alphanumeric, hyphens, underscores, and # symbol
+          const orderNumberPattern = /^[A-Za-z0-9#\-_]+$/;
+          if (!orderNumber || orderNumber.length === 0 || !orderNumberPattern.test(orderNumber)) {
+            console.error('❌ Invalid internal_code format: order number contains invalid characters');
             return res.status(400).json({
               success: false,
-              message: 'Invalid internal_code format: order number is empty'
+              message: 'Invalid internal_code format: order number contains invalid characters'
             });
           }
+          
+          // SECURITY: Additional length validation to prevent extremely long strings
+          if (orderNumber.length > 50) {
+            console.error('❌ Invalid internal_code format: order number too long');
+            return res.status(400).json({
+              success: false,
+              message: 'Invalid internal_code format: order number too long'
+            });
+          }
+          
           console.log('🔍 Order number from internal_code:', orderNumber);
         } else {
-          // Si no tiene el prefijo, intentar usar el internal_code directamente
-          // pero validar que sea un formato válido
-          orderNumber = internal_code.trim();
-          console.log('⚠️ internal_code does not have SHOPIFY-ORDER- prefix, using as-is:', orderNumber);
-          
-          // Si el internal_code no tiene el formato esperado, puede ser un error
-          // Pero intentamos continuar si parece ser un número de orden válido
-          if (orderNumber.length === 0 || orderNumber.includes('Ø') || orderNumber.match(/[^A-Z0-9-]/i)) {
-            console.error('❌ Invalid internal_code format:', internal_code);
+          // Si no tiene el prefijo, validar que sea un identificador válido
+          // SECURITY: Validate that it's a safe identifier
+          const safeIdentifierPattern = /^[A-Za-z0-9#\-_]+$/;
+          if (!safeIdentifierPattern.test(sanitizedInternalCode) || sanitizedInternalCode.length > 50) {
+            console.error('❌ Invalid internal_code format: invalid characters or too long');
             return res.status(400).json({
               success: false,
-              message: `Invalid internal_code format: "${internal_code}". Expected format: SHOPIFY-ORDER-{number}`
+              message: `Invalid internal_code format: "${sanitizedInternalCode}". Expected format: SHOPIFY-ORDER-{number}`
             });
           }
+          // Usar el código sanitizado
+          orderNumber = sanitizedInternalCode;
+          console.log('⚠️ internal_code does not have SHOPIFY-ORDER- prefix, using as-is:', orderNumber);
         }
       } else {
         console.error('❌ Invalid internal_code: not a string or empty');
@@ -1073,8 +1090,25 @@ export async function checkDebtStatus(req, res) {
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'No error details');
       console.error('❌ Qhantuy API error:', response.status, response.statusText, errorText);
+      
+      // Manejar error 429 (Too Many Requests) específicamente
+      if (response.status === 429) {
+        console.warn('⚠️ Rate limit alcanzado (429). Demasiadas solicitudes a Qhantuy.');
+        return res.status(429).json({
+          success: false,
+          status: 429,
+          message: `Qhantuy API error: 429 Too Many Requests`,
+          tip: 'Demasiadas solicitudes. Por favor espera antes de verificar nuevamente. El sistema pausará automáticamente el polling.',
+          qhantuy_error: true,
+          rate_limited: true,
+          attempted_url: `${apiUrl}/check-payments`,
+          payment_ids: paymentIds
+        });
+      }
+      
       return res.status(response.status).json({
         success: false,
+        status: response.status,
         message: `Qhantuy API error: ${response.status} ${response.statusText}`,
         tip: 'Verify QHANTUY_API_URL is correct and contains /external-api',
         attempted_url: `${apiUrl}/check-payments`,
@@ -1326,7 +1360,12 @@ async function getShopSession(shopDomain) {
     }
   } else {
     console.log(`✅ Using automatically stored token (persistent) for: ${normalizedShop}`);
-    console.log(`   Token preview: ${accessToken.substring(0, 15)}...`);
+    // SECURITY: No log token preview in production
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`   Token preview: ${accessToken.substring(0, 15)}...`);
+    } else {
+      console.log(`   Token preview: [REDACTED]`);
+    }
   }
   
   if (!accessToken) {
@@ -1353,67 +1392,7 @@ async function getShopSession(shopDomain) {
   };
 }
 
-/**
- * Handle webhook for order creation
- */
-export async function handleOrderCreate(req, res) {
-  try {
-    const hmac = req.headers['x-shopify-hmac-sha256'];
-    const body = req.body;
-
-    // Verify webhook
-    const verified = await shopify.webhooks.validate({
-      rawBody: JSON.stringify(body),
-      rawHeader: hmac
-    });
-
-    if (!verified) {
-      return res.status(401).json({ error: 'Webhook verification failed' });
-    }
-
-    // Process order created event
-    console.log('Order created:', body.id);
-
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error handling order create webhook:', error);
-    // SECURITY: Don't expose error details in production
-    return res.status(500).json({ 
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-}
-
-/**
- * Handle webhook for order update
- */
-export async function handleOrderUpdate(req, res) {
-  try {
-    const hmac = req.headers['x-shopify-hmac-sha256'];
-    const body = req.body;
-
-    // Verify webhook
-    const verified = await shopify.webhooks.validate({
-      rawBody: JSON.stringify(body),
-      rawHeader: hmac
-    });
-
-    if (!verified) {
-      return res.status(401).json({ error: 'Webhook verification failed' });
-    }
-
-    // Process order updated event
-    console.log('Order updated:', body.id);
-
-    return res.status(200).json({ success: true });
-  } catch (error) {
-    console.error('Error handling order update webhook:', error);
-    // SECURITY: Don't expose error details in production
-    return res.status(500).json({ 
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
-    });
-  }
-}
+// Webhooks eliminados - no se están usando actualmente
 
 /**
  * Save Transaction ID to Shopify order note and timeline
@@ -1424,7 +1403,7 @@ export async function handleOrderUpdate(req, res) {
  */
 export async function saveTransactionId(req, res) {
   try {
-    const { order_id, transaction_id, internal_code, confirmation_number } = req.body;
+    const { order_id, transaction_id, internal_code, confirmation_number, qr_image_url } = req.body;
 
     if (!order_id || !transaction_id) {
       return res.status(400).json({
@@ -1632,11 +1611,24 @@ export async function saveTransactionId(req, res) {
       }
     }
     
-    // Build note with Transaction ID
+    // Build note with Transaction ID and QR URL (if provided)
     // realShopDomain ya está definido arriba (después de obtener la sesión)
+    // Si qr_image_url es una data URL muy larga, solo guardar una referencia
+    // Si es una URL externa, guardarla completa
+    let qrUrlNote = '';
+    if (qr_image_url) {
+      // Si es una data URL y es muy larga (>5000 caracteres), solo guardar referencia
+      if (qr_image_url.startsWith('data:') && qr_image_url.length > 5000) {
+        qrUrlNote = `QR Image: [Data URL - ${qr_image_url.length} chars - Use transaction_id to retrieve from Qhantuy]\n`;
+      } else {
+        // URL externa o data URL corta - guardar completa
+        qrUrlNote = `QR Image URL: ${qr_image_url}\n`;
+      }
+    }
+    
     const transactionNote = `Qhantuy QR Payment Created
 Transaction ID: ${transaction_id}
-${confirmation_number ? `Confirmation Number: ${confirmation_number}\n` : ''}${orderName ? `Order Number: ${orderName}\n` : ''}Internal Code: ${internal_code || 'N/A'}
+${qrUrlNote}${confirmation_number ? `Confirmation Number: ${confirmation_number}\n` : ''}${orderName ? `Order Number: ${orderName}\n` : ''}Internal Code: ${internal_code || 'N/A'}
 Created at: ${new Date().toISOString()}
 Shop: ${realShopDomain}`;
     
@@ -1700,6 +1692,317 @@ Shop: ${realShopDomain}`;
 
   } catch (error) {
     console.error('❌ Error saving transaction ID:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Get QR code and transaction ID from Shopify order notes
+ * Used when storage is not available or not shared between pages
+ */
+export async function getOrderQrFromNotes(req, res) {
+  try {
+    const { order_id, order_number, qr_validity_hours = 2 } = req.body; // Horas de validez del QR (default: 2)
+
+    if (!order_id && !order_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: order_id or order_number'
+      });
+    }
+
+    // Get shop session
+    const shopDomain = req.headers['x-shopify-shop-domain'] || 
+                       req.query.shop || 
+                       req.body.shop ||
+                       req.headers['x-shopify-shop'];
+    
+    if (!shopDomain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Shop domain is required'
+      });
+    }
+    
+    const session = await getShopSession(shopDomain);
+    
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Shop session not found'
+      });
+    }
+
+    // Get order using REST API
+    const rest = new shopify.clients.Rest({ session });
+    const client = new shopify.clients.Graphql({ session });
+    
+    let order;
+    let numericOrderId;
+    let graphQLOrderId;
+    
+    if (order_number) {
+      // Buscar por order number (name)
+      const ordersResponse = await rest.get({
+        path: 'orders',
+        query: { name: order_number, limit: 1 }
+      });
+      
+      if (!ordersResponse.body.orders || ordersResponse.body.orders.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+      
+      order = ordersResponse.body.orders[0];
+      numericOrderId = order.id;
+      graphQLOrderId = `gid://shopify/Order/${numericOrderId}`;
+    } else {
+      // Buscar por order ID
+      numericOrderId = order_id;
+      if (order_id.startsWith('gid://shopify/Order/')) {
+        numericOrderId = order_id.replace('gid://shopify/Order/', '');
+      }
+      
+      graphQLOrderId = `gid://shopify/Order/${numericOrderId}`;
+      
+      const orderResponse = await rest.get({
+        path: `orders/${numericOrderId}`
+      });
+      
+      order = orderResponse.body.order;
+    }
+
+    // Obtener notas del pedido usando GraphQL
+    const getOrderQuery = `
+      query getOrder($id: ID!) {
+        order(id: $id) {
+          id
+          note
+        }
+      }
+    `;
+    
+    let note = '';
+    try {
+      const orderResult = await client.request(getOrderQuery, {
+        variables: { id: graphQLOrderId }
+      });
+      
+      if (orderResult.data?.order?.note) {
+        note = orderResult.data.order.note;
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not fetch order note:', error.message);
+    }
+
+    if (!note) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order note not found or empty'
+      });
+    }
+
+    // Extraer transaction_id y QR URL de la nota
+    const txIdMatch = note.match(/Transaction ID:\s*(\d+)/i);
+    const qrUrlMatch = note.match(/QR Image URL:\s*(.+?)(?:\n|$)/i);
+    
+    const transactionId = txIdMatch ? txIdMatch[1].trim() : null;
+    const qrImageUrl = qrUrlMatch ? qrUrlMatch[1].trim() : null;
+    
+    // Extraer también la fecha de creación para verificar si el QR expiró
+    const createdAtMatch = note.match(/Created at:\s*(.+?)(?:\n|$)/i);
+    const createdAt = createdAtMatch ? createdAtMatch[1].trim() : null;
+    
+    if (!transactionId) {
+      return res.status(404).json({
+        success: false,
+        message: 'Transaction ID not found in order notes'
+      });
+    }
+
+    // Verificar si el QR expiró (basado en las horas de validez configuradas)
+    let qrExpired = false;
+    const validityHours = qr_validity_hours || 2;
+    if (createdAt) {
+      try {
+        const createdDate = new Date(createdAt);
+        const now = new Date();
+        const ageInHours = (now - createdDate) / (1000 * 60 * 60);
+        
+        if (ageInHours > validityHours) {
+          qrExpired = true;
+          console.log(`⏰ QR expired (${ageInHours.toFixed(2)} hours old, validity: ${validityHours} hours)`);
+        }
+      } catch (dateError) {
+        console.warn('⚠️ Could not parse created date:', dateError);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      order_id: numericOrderId,
+      order_number: order.name,
+      transaction_id: transactionId,
+      qr_image_url: qrImageUrl,
+      created_at: createdAt,
+      qr_expired: qrExpired,
+      note_preview: note.substring(0, 200) + '...' // Preview para debugging
+    });
+
+  } catch (error) {
+    console.error('Error getting QR from order notes:', error);
+    if (error.statusCode === 404) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+}
+
+/**
+ * Get customer email from Shopify order
+ * Used as fallback when email is not available in frontend
+ */
+export async function getOrderCustomerEmail(req, res) {
+  try {
+    const { order_id, order_number } = req.body;
+
+    if (!order_id && !order_number) {
+      return res.status(400).json({
+        success: false,
+        message: 'Missing required parameter: order_id or order_number'
+      });
+    }
+
+    // Get shop session
+    const shopDomain = req.headers['x-shopify-shop-domain'] || 
+                       req.query.shop || 
+                       req.body.shop ||
+                       req.headers['x-shopify-shop'];
+    
+    if (!shopDomain) {
+      return res.status(400).json({
+        success: false,
+        message: 'Shop domain is required'
+      });
+    }
+    
+    const session = await getShopSession(shopDomain);
+    
+    if (!session) {
+      return res.status(401).json({
+        success: false,
+        message: 'Shop session not found'
+      });
+    }
+
+    // Get order using REST API
+    const rest = new shopify.clients.Rest({ session });
+    
+    let order;
+    if (order_number) {
+      // Buscar por order number (name)
+      const ordersResponse = await rest.get({
+        path: 'orders',
+        query: { name: order_number, limit: 1 }
+      });
+      
+      if (!ordersResponse.body.orders || ordersResponse.body.orders.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found'
+        });
+      }
+      
+      order = ordersResponse.body.orders[0];
+    } else {
+      // Buscar por order ID
+      let numericOrderId = order_id;
+      if (order_id.startsWith('gid://shopify/Order/')) {
+        numericOrderId = order_id.replace('gid://shopify/Order/', '');
+      }
+      
+      const orderResponse = await rest.get({
+        path: `orders/${numericOrderId}`
+      });
+      
+      order = orderResponse.body.order;
+    }
+
+    // Obtener email del cliente desde múltiples fuentes
+    // Logging detallado para debugging
+    console.log('🔍 Searching for customer email in order:', {
+      order_id: order.id,
+      order_name: order.name,
+      has_email: !!order.email,
+      has_customer: !!order.customer,
+      customer_email: order.customer?.email,
+      has_contact_email: !!order.contact_email,
+      has_billing_address: !!order.billing_address,
+      billing_email: order.billing_address?.email,
+      order_keys: Object.keys(order).slice(0, 20) // Primeras 20 keys para debugging
+    });
+    
+    const customerEmail = order.email || 
+                         order.customer?.email || 
+                         order.contact_email ||
+                         order.billing_address?.email ||
+                         order.customer?.contact_email ||
+                         null;
+
+    if (!customerEmail) {
+      console.error('❌ Customer email not found in order:', {
+        order_id: order.id,
+        order_name: order.name,
+        available_fields: {
+          email: order.email,
+          customer_email: order.customer?.email,
+          contact_email: order.contact_email,
+          billing_email: order.billing_address?.email
+        }
+      });
+      return res.status(404).json({
+        success: false,
+        message: 'Customer email not found in order',
+        debug: {
+          order_id: order.id,
+          order_name: order.name,
+          checked_fields: ['email', 'customer.email', 'contact_email', 'billing_address.email']
+        }
+      });
+    }
+    
+    console.log('✅ Customer email found:', customerEmail);
+
+    return res.status(200).json({
+      success: true,
+      order_id: order.id,
+      order_number: order.name,
+      customer_email: customerEmail,
+      customer_first_name: order.customer?.first_name || order.billing_address?.first_name || null,
+      customer_last_name: order.customer?.last_name || order.billing_address?.last_name || null
+    });
+
+  } catch (error) {
+    console.error('Error getting order customer email:', error);
+    if (error.statusCode === 404) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
     return res.status(500).json({
       success: false,
       message: 'Internal server error',
@@ -1830,16 +2133,17 @@ export async function periodicPaymentCheck(req, res) {
     
     // Verificar cada pedido pendiente
     for (const orderData of pendingOrders) {
-      const { transaction_id, internal_code, shop_domain, created_at } = orderData;
+      const { transaction_id, internal_code, shop_domain, created_at, qr_validity_hours = 2 } = orderData;
       
       try {
-        // Verificar que el pedido no sea muy antiguo (más de 2 horas)
+        // Verificar que el pedido no haya expirado (basado en las horas de validez configuradas)
         const createdAt = new Date(created_at);
         const now = new Date();
         const ageInHours = (now - createdAt) / (1000 * 60 * 60);
+        const validityHours = qr_validity_hours || 2;
         
-        if (ageInHours > 2) {
-          console.log(`⏰ Order ${transaction_id} is older than 2 hours, removing from pending list`);
+        if (ageInHours > validityHours) {
+          console.log(`⏰ Order ${transaction_id} is older than ${validityHours} hours (QR validity), removing from pending list`);
           await removePendingOrder(shop_domain, transaction_id);
           continue;
         }

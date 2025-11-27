@@ -68,3 +68,10 @@ api_access = true
   type = "single_line_text_field"
   name = "URL del GIF de Éxito"
   description = "URL del GIF animado para mostrar cuando el pago es exitoso (opcional)"
+  
+  [[extensions.settings.fields]]
+  key = "qr_validity_hours"
+  type = "number_integer"
+  name = "Validez del QR (horas)"
+  description = "Tiempo de validez del código QR en horas (default: 2)"
+  default = 2

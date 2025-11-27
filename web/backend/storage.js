@@ -196,7 +196,12 @@ export async function getAccessToken(shopDomain) {
       const token = await redis.get(tokenKey);
       if (token) {
         console.log(`✅ Token retrieved from Redis for: ${normalizedShop}`);
-        console.log(`   Token preview: ${token.substring(0, 15)}...`);
+        // SECURITY: No log token preview in production
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`   Token preview: ${token.substring(0, 15)}...`);
+        } else {
+          console.log(`   Token preview: [REDACTED]`);
+        }
         return token;
       } else {
         console.log(`ℹ️  No token found in Redis for: ${normalizedShop} (key: ${tokenKey})`);
@@ -274,7 +279,7 @@ export async function getAllTokens() {
  * Stores order data when QR is created
  */
 export async function storePendingOrder(orderData) {
-  const { transaction_id, internal_code, shop_domain, order_id, order_number, created_at } = orderData;
+  const { transaction_id, internal_code, shop_domain, order_id, order_number, created_at, qr_validity_hours = 2 } = orderData;
   
   if (!transaction_id || !internal_code || !shop_domain) {
     console.error('❌ Invalid parameters for storePendingOrder:', orderData);
@@ -312,18 +317,22 @@ export async function storePendingOrder(orderData) {
       order_id: order_id || null,
       order_number: order_number || null,
       created_at: created_at || new Date().toISOString(),
+      qr_validity_hours: qr_validity_hours || 2, // Horas de validez del QR
       last_checked: null,
       check_count: 0
     };
     
-    // Guardar orden pendiente (expira después de 2 horas = 7200 segundos)
-    await redis.setex(orderKey, 7200, JSON.stringify(orderDataToStore));
+    // Calcular TTL en segundos basado en las horas de validez del QR
+    const ttlSeconds = (qr_validity_hours || 2) * 60 * 60;
+    
+    // Guardar orden pendiente (expira después de las horas de validez configuradas)
+    await redis.setex(orderKey, ttlSeconds, JSON.stringify(orderDataToStore));
     
     // Agregar a la lista de pedidos pendientes de esta tienda
     const pendingListKey = `pending_orders:${normalizedShop}`;
     await redis.sadd(pendingListKey, transaction_id);
-    // La lista también expira después de 2 horas
-    await redis.expire(pendingListKey, 7200);
+    // La lista también expira después de las horas de validez configuradas
+    await redis.expire(pendingListKey, ttlSeconds);
     
     console.log(`✅ Pending order stored for periodic check: ${orderKey}`);
     return true;

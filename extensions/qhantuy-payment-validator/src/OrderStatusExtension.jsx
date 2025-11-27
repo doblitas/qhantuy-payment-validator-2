@@ -66,6 +66,7 @@ function QhantuPaymentValidatorOrderStatus() {
   const [qrData, setQrData] = useState(null);
   const [transactionId, setTransactionId] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [hasClickedManual, setHasClickedManual] = useState(false); // Rastrear si el usuario hizo clic manualmente
   const [isChecking, setIsChecking] = useState(false);
   const [pollingStopped, setPollingStopped] = useState(false);
   const [pollingStartTime, setPollingStartTime] = useState(null);
@@ -77,6 +78,10 @@ function QhantuPaymentValidatorOrderStatus() {
   const retryAttemptRef = useRef(0);
   const isInitializingRef = useRef(false);
   const isCreatingCheckoutRef = useRef(false); // Prevenir creación duplicada de checkout
+  const pollingIntervalRef = useRef(null); // Ref para almacenar el ID del intervalo de polling
+  const pollingMaxTimeoutRef = useRef(null); // Ref para almacenar el timeout máximo
+  const checkPaymentStatusRef = useRef(null); // Ref para almacenar la función checkPaymentStatus más reciente
+  const isPollingActiveRef = useRef(false); // Flag para prevenir múltiples intervalos
   
   // Configuración de reintentos y timeouts
   const MAX_RETRIES = 10; // Máximo número de reintentos
@@ -1228,29 +1233,94 @@ function QhantuPaymentValidatorOrderStatus() {
       }
       
       // VALIDACIÓN: No usar valores dummy si no tenemos datos reales
-      // Si no tenemos email real, no crear checkout (es requerido)
-      if (!customerEmail || customerEmail === 'cliente@tienda.com') {
-        console.error('❌ No se pudo obtener el email del cliente. No se puede crear checkout.');
-        console.error('   Fuentes consultadas:', {
+      // Si no tenemos email real, intentar obtenerlo desde el backend
+      let finalCustomerEmail = customerEmail;
+      // Declarar variables para datos del backend (fuera del if para que estén en scope)
+      let backendFirstName = null;
+      let backendLastName = null;
+      
+      if (!finalCustomerEmail || finalCustomerEmail === 'cliente@tienda.com') {
+        console.warn('⚠️ No se pudo obtener el email del cliente desde el frontend. Intentando obtenerlo desde el backend...');
+        console.warn('   Fuentes consultadas:', {
           orderCustomerEmail: order?.customer?.email,
           orderDirectEmail: order?.email,
           actualOrderCustomerEmail: actualOrder?.customer?.email,
           purchaseCustomer: purchase?.customer?.email,
           apiContact: api?.contact?.email
         });
-        return {
-          process: false,
-          message: 'Error: No se pudo obtener el email del cliente desde Shopify. Por favor contacta a soporte.'
-        };
+        
+        // Intentar obtener el email desde el backend consultando la orden de Shopify
+        try {
+          const { id: orderId, number: orderNumber } = getOrderIdentifiers();
+          const shopDomain = shop?.domain || shop?.myshopifyDomain;
+          
+          if (orderId || orderNumber) {
+            const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+            const getEmailUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/get-customer-email`;
+            
+            console.log('📧 Fetching customer email from backend:', {
+              orderId,
+              orderNumber,
+              shopDomain,
+              url: getEmailUrl
+            });
+            
+            const emailResponse = await fetch(getEmailUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Shop-Domain': shopDomain || ''
+              },
+              body: JSON.stringify({
+                order_id: orderId,
+                order_number: orderNumber,
+                shop: shopDomain
+              })
+            });
+            
+            if (emailResponse.ok) {
+              const emailData = await emailResponse.json();
+              if (emailData.success && emailData.customer_email) {
+                finalCustomerEmail = emailData.customer_email;
+                console.log('✅ Email obtenido desde el backend:', finalCustomerEmail);
+                
+                // Guardar firstName y lastName del backend si están disponibles
+                if (emailData.customer_first_name) {
+                  backendFirstName = emailData.customer_first_name;
+                }
+                if (emailData.customer_last_name) {
+                  backendLastName = emailData.customer_last_name;
+                }
+              } else {
+                console.warn('⚠️ Backend no retornó email válido:', emailData);
+              }
+            } else {
+              const errorText = await emailResponse.text();
+              console.warn('⚠️ Error al obtener email desde backend:', emailResponse.status, errorText);
+            }
+          }
+        } catch (emailError) {
+          console.error('❌ Error al intentar obtener email desde backend:', emailError);
+        }
+        
+        // Si aún no tenemos email, retornar error
+        if (!finalCustomerEmail || finalCustomerEmail === 'cliente@tienda.com') {
+          console.error('❌ No se pudo obtener el email del cliente ni desde frontend ni desde backend.');
+          return {
+            process: false,
+            message: `Error: No se pudo obtener el email del cliente desde Shopify. Por favor contacta a soporte.\n\nPor favor contacta a soporte con tu número de orden: #${number || id || 'N/A'}`
+          };
+        }
       }
       
       // Si no tenemos nombre, usar email como fallback (mejor que "Cliente")
-      const finalFirstName = firstName || customerEmail.split('@')[0] || 'Cliente';
-      const finalLastName = lastName || '';
+      // Priorizar: backend > frontend > email prefix
+      const finalFirstName = backendFirstName || firstName || finalCustomerEmail.split('@')[0] || 'Cliente';
+      const finalLastName = backendLastName || lastName || '';
       
       const requestBody = {
         appkey: appkey,
-        customer_email: customerEmail, // Ya validado arriba
+        customer_email: finalCustomerEmail, // Ya validado arriba (puede venir del backend)
         customer_first_name: finalFirstName,
         customer_last_name: finalLastName,
         currency_code: currencyCode,
@@ -1368,7 +1438,8 @@ function QhantuPaymentValidatorOrderStatus() {
             detail: requestBody.detail,
             callback_url: requestBody.callback_url,
             return_url: requestBody.return_url,
-            items: requestBody.items
+            items: requestBody.items,
+            qr_validity_hours: formattedSettings.qrValidityHours || 2 // Horas de validez del QR
           }),
           signal: controller.signal
         });
@@ -1536,8 +1607,19 @@ function QhantuPaymentValidatorOrderStatus() {
             const statusData = await statusResponse.json();
             console.log('📊 Estado del pedido:', statusData);
             
-            if (statusData.financial_status === 'paid') {
-              console.log('✅ El pedido ya está pagado. No se necesita crear QR.');
+            // IMPORTANTE: Verificar que el pedido esté REALMENTE pagado, no solo confirmado
+            // financial_status puede ser 'paid' pero is_paid debe ser true para confirmar el pago
+            const isPaidInShopify = (statusData.financial_status === 'paid' || statusData.financial_status === 'pending') && 
+                                   (statusData.is_paid === true || statusData.is_paid === 'true');
+            
+            console.log('🔍 Verificación de pago en Shopify:', {
+              financial_status: statusData.financial_status,
+              is_paid: statusData.is_paid,
+              isPaidInShopify
+            });
+            
+            if (isPaidInShopify) {
+              console.log('✅ El pedido ya está pagado en Shopify. No se necesita crear QR.');
               setPaymentStatus('success');
               setErrorMessage(''); // Limpiar cualquier error previo
               setPollingStopped(true); // Detener polling si ya está pagado
@@ -1549,6 +1631,12 @@ function QhantuPaymentValidatorOrderStatus() {
               isInitializingRef.current = false;
               isCreatingCheckoutRef.current = false;
               return;
+            } else {
+              console.log('⚠️ Pedido NO está pagado en Shopify:', {
+                financial_status: statusData.financial_status,
+                is_paid: statusData.is_paid,
+                note: 'Continuando con el flujo de verificación...'
+              });
             }
           }
         } catch (statusError) {
@@ -1557,38 +1645,274 @@ function QhantuPaymentValidatorOrderStatus() {
         }
       }
       
-      // PASO 1: Verificar si ya existe un transaction_id guardado
-      // En Order Status, debemos usar check-debt en lugar de crear un nuevo checkout
+      // PASO 1: SIEMPRE obtener transaction_id y QR desde Shopify order notes primero
+      // NO usar storage directamente - siempre verificar Shopify como fuente de verdad
+      console.log('🔍 Getting transaction_id and QR from Shopify order notes (OrderStatus)...');
+      
+      const currentOrderNumber = orderNumber || orderId;
+      let txIdFromShopify = null;
+      let qrFromShopify = null;
+      let qrExpiredFromShopify = false;
+      let createdAtFromShopify = null;
+      
+      try {
+        const shopDomain = shop?.domain || shop?.myshopifyDomain;
+        if ((orderId || orderNumber) && shopDomain) {
+          const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+          const getQrUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/get-qr-from-notes`;
+          
+          console.log('🔍 Fetching QR and transaction_id from Shopify order notes...', {
+            orderId,
+            orderNumber,
+            shopDomain,
+            url: getQrUrl
+          });
+          
+          const qrResponse = await fetch(getQrUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Shop-Domain': shopDomain
+            },
+            body: JSON.stringify({
+              order_id: orderId,
+              order_number: orderNumber,
+              shop: shopDomain,
+              qr_validity_hours: formattedSettings.qrValidityHours || 2 // Horas de validez del QR
+            })
+          });
+          
+          if (qrResponse.ok) {
+            const qrData = await qrResponse.json();
+            if (qrData.success && qrData.transaction_id) {
+              console.log('✅✅✅ Found transaction_id and QR from Shopify order notes! ✅✅✅');
+              console.log('   Transaction ID:', qrData.transaction_id);
+              console.log('   QR URL:', qrData.qr_image_url ? 'Found' : 'Not found in notes');
+              console.log('   QR Expired:', qrData.qr_expired);
+              console.log('   Created At:', qrData.created_at);
+              
+              txIdFromShopify = qrData.transaction_id;
+              qrFromShopify = qrData.qr_image_url;
+              qrExpiredFromShopify = qrData.qr_expired || false;
+              createdAtFromShopify = qrData.created_at;
+            } else {
+              console.log('ℹ️ No transaction_id found in Shopify order notes for this order');
+            }
+          } else {
+            console.warn('⚠️ Could not fetch from Shopify order notes:', qrResponse.status, qrResponse.statusText);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error fetching from Shopify order notes:', error);
+      }
+      
+      // Si encontramos transaction_id en Shopify, usarlo (es la fuente de verdad)
+      if (txIdFromShopify) {
+        console.log('✅ Using transaction_id from Shopify order notes (OrderStatus):', txIdFromShopify);
+        
+        // Si el QR expiró, no usarlo y crear uno nuevo
+        if (qrExpiredFromShopify) {
+          console.log('⏰ QR from Shopify order notes has expired. Will create new QR.');
+          // Continuar para crear un nuevo checkout
+        } else {
+          // Usar el transaction_id y QR de Shopify
+          setTransactionId(txIdFromShopify);
+          if (qrFromShopify) {
+            setQrData(qrFromShopify);
+            await storage.write('qr_image', qrFromShopify);
+          }
+          await storage.write('transaction_id', txIdFromShopify);
+          await storage.write('order_number', currentOrderNumber);
+          if (createdAtFromShopify) {
+            await storage.write('qr_created_at', createdAtFromShopify);
+          }
+          
+          // Verificar el estado del pago usando check-debt
+          const debtStatus = await checkExistingPayment(txIdFromShopify);
+          
+          if (debtStatus) {
+            console.log('✅ Payment status retrieved from check-debt (OrderStatus):', debtStatus.payment_status);
+            
+            setTransactionId(debtStatus.transaction_id);
+            
+            // Si hay QR disponible, usarlo
+            if (debtStatus.qr_image) {
+              setQrData(debtStatus.qr_image);
+              await storage.write('qr_image', debtStatus.qr_image);
+            } else if (qrFromShopify) {
+              setQrData(qrFromShopify);
+            }
+            
+            // Actualizar estado según el payment_status
+            const paymentStatusValue = debtStatus.payment_status;
+            if (paymentStatusValue === 'success' || paymentStatusValue === 'paid') {
+              setPaymentStatus('success');
+              await storage.write('payment_status', 'success');
+              setPollingStopped(true);
+            } else if (paymentStatusValue === 'rejected' || paymentStatusValue === 'failed') {
+              setPaymentStatus('rejected');
+              setErrorMessage('El pago fue rechazado. Por favor intenta de nuevo.');
+              setPollingStopped(true);
+            } else {
+              // pending, holding, etc.
+              setPaymentStatus('pending');
+              setPollingStopped(false);
+              setPollingStartTime(null);
+            }
+            
+            isInitializingRef.current = false;
+            isCreatingCheckoutRef.current = false;
+            return;
+          } else {
+            // Si check-debt falló pero tenemos QR de Shopify, usar ese QR
+            console.log('⚠️ Check-debt failed, but using QR from Shopify order notes (OrderStatus)');
+            setPaymentStatus('pending');
+            setPollingStopped(false);
+            setPollingStartTime(null);
+            setErrorMessage('');
+            isInitializingRef.current = false;
+            isCreatingCheckoutRef.current = false;
+            return;
+          }
+        }
+      }
+      
+      // Si no encontramos transaction_id en Shopify, leer storage como fallback
+      console.log('🔍 No transaction_id found in Shopify order notes, checking storage as fallback (OrderStatus)...');
       const savedTxId = await storage.read('transaction_id');
       const savedQr = await storage.read('qr_image');
       const savedStatus = await storage.read('payment_status');
-      const savedCreatedAt = await storage.read('qr_created_at'); // Timestamp de cuando se creó el QR
+      const savedCreatedAt = await storage.read('qr_created_at');
+      const savedOrderNumber = await storage.read('order_number');
       
-      console.log('Storage check (OrderStatus):', { savedTxId, hasSavedQr: !!savedQr, savedStatus, savedCreatedAt });
+      console.log('📦 Storage check (OrderStatus - fallback):', { 
+        savedTxId, 
+        savedOrderNumber,
+        currentOrderNumber,
+        orderMatches: savedOrderNumber === currentOrderNumber,
+        hasSavedQr: !!savedQr, 
+        savedQrLength: savedQr ? savedQr.length : 0,
+        savedStatus, 
+        savedCreatedAt
+      });
       
-      // Si el pago ya fue exitoso, restaurar desde storage
-      if (savedStatus === 'success') {
-        console.log('✅ Payment already successful, restoring from storage (OrderStatus)...');
-        setPaymentStatus('success');
+      // CRÍTICO: Solo usar datos del storage si pertenecen al pedido actual
+      const canUseStorage = savedOrderNumber === currentOrderNumber;
+      
+      if (!canUseStorage && savedTxId) {
+        console.warn('⚠️ Storage data belongs to different order, clearing it');
+        await storage.write('transaction_id', null);
+        await storage.write('qr_image', null);
+        await storage.write('payment_status', null);
+        await storage.write('qr_created_at', null);
+        await storage.write('order_number', null);
+      } else if (savedStatus === 'success' && canUseStorage) {
+        console.log('⚠️ Payment marked as success in storage, but verifying in Shopify first (OrderStatus)...');
+        
+        // CRÍTICO: Verificar en Shopify que realmente esté pagado antes de restaurar
+        try {
+          const { number: orderNumber, id: orderId } = getOrderIdentifiers();
+          if (orderNumber || orderId) {
+            const shopDomain = shop?.domain || shop?.myshopifyDomain;
+            const checkOrderStatusUrl = `${formattedSettings.backendApiUrl.replace(/\/$/, '')}/api/orders/check-status`;
+            
+            const statusResponse = await fetch(checkOrderStatusUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Shop-Domain': shopDomain || ''
+              },
+              body: JSON.stringify({
+                order_id: orderId || orderNumber
+              })
+            });
+            
+            if (statusResponse.ok) {
+              const statusData = await statusResponse.json();
+              console.log('📊 Estado del pedido al verificar desde storage:', statusData);
+              
+              // IMPORTANTE: Verificar que el pedido esté REALMENTE pagado, no solo confirmado
+              const isPaidInShopify = (statusData.financial_status === 'paid' || statusData.financial_status === 'pending') && 
+                                     (statusData.is_paid === true || statusData.is_paid === 'true');
+              
+              if (isPaidInShopify) {
+                console.log('✅ Payment confirmed in Shopify, restoring from storage (OrderStatus)...');
+                setPaymentStatus('success');
+                setTransactionId(savedTxId);
+                setQrData(savedQr);
+                setPollingStopped(true);
+                isInitializingRef.current = false;
+                isCreatingCheckoutRef.current = false;
+                return;
+              } else {
+                console.log('⚠️ Payment NOT confirmed in Shopify, clearing success status from storage:', {
+                  financial_status: statusData.financial_status,
+                  is_paid: statusData.is_paid,
+                  note: 'Will continue with normal flow...'
+                });
+                // Limpiar el estado de success del storage si no está realmente pagado
+                await storage.write('payment_status', 'pending');
+                // Continuar con el flujo normal
+              }
+            } else {
+              console.warn('⚠️ Could not verify order status in Shopify, continuing with normal flow...');
+              // Continuar con el flujo normal si no se puede verificar
+            }
+          }
+        } catch (verifyError) {
+          console.warn('⚠️ Error verifying order status from storage (continuing...):', verifyError);
+          // Continuar con el flujo normal si falla la verificación
+        }
+      }
+      
+      // PASO 2: Si no encontramos en Shopify, usar storage SOLO como último recurso
+      // CRÍTICO: Solo usar storage si pertenece al pedido actual
+      if (savedQr && savedTxId && canUseStorage) {
+        console.log('⚠️ Using storage as fallback (OrderStatus):', {
+          savedTxId,
+          savedOrderNumber,
+          currentOrderNumber,
+          note: 'This should rarely happen - Shopify order notes should be the source of truth'
+        });
+        
         setTransactionId(savedTxId);
         setQrData(savedQr);
-        setPollingStopped(true);
+        setPaymentStatus('pending');
+        setPollingStopped(false);
+        setPollingStartTime(null);
+        if (!savedCreatedAt) {
+          await storage.write('qr_created_at', new Date().toISOString());
+        }
+        setErrorMessage('');
         isInitializingRef.current = false;
         isCreatingCheckoutRef.current = false;
+        console.log('✅ QR restored from storage (fallback). Exiting attemptCheckoutCreation.');
         return;
       }
       
-      // PASO 2: Si tenemos transaction_id, verificar si el QR expiró (más de 2 horas)
+      console.log('ℹ️ No transaction_id found in Shopify order notes or storage. Will create new checkout.');
+      
+      // Si tenemos QR guardado pero no transaction_id, intentar restaurar el QR
+      // Esto puede pasar si el storage se corrompió parcialmente o si hubo un error previo
+      if (savedQr && !savedTxId) {
+        console.log('⚠️ Found saved QR but no transaction_id. QR may be invalid, will create new checkout.');
+        // Limpiar QR inválido y crear uno nuevo
+        await storage.write('qr_image', null);
+        await storage.write('qr_created_at', null);
+      }
+      
+      // PASO 2: Si tenemos transaction_id, verificar si el QR expiró (basado en horas de validez configuradas)
       let existingTxId = savedTxId || transactionId;
       let qrExpired = false;
+      const qrValidityHours = formattedSettings.qrValidityHours || 2;
       
       if (existingTxId && savedCreatedAt) {
         const qrCreatedTime = new Date(savedCreatedAt).getTime();
         const now = Date.now();
         const ageInHours = (now - qrCreatedTime) / (1000 * 60 * 60);
         
-        if (ageInHours > 2) {
-          console.log(`⏰ QR expired (${ageInHours.toFixed(2)} hours old). Will create new QR.`);
+        if (ageInHours > qrValidityHours) {
+          console.log(`⏰ QR expired (${ageInHours.toFixed(2)} hours old, validity: ${qrValidityHours} hours). Will create new QR.`);
           qrExpired = true;
           // Limpiar datos del QR expirado
           await storage.write('transaction_id', null);
@@ -1645,17 +1969,40 @@ function QhantuPaymentValidatorOrderStatus() {
             console.log('✅ Estado establecido a pending, polling se iniciará automáticamente (OrderStatus)');
           }
           
-          // Guardar transaction_id en storage si no estaba
+          // Guardar transaction_id en storage si no estaba, junto con order_number
           if (!savedTxId) {
             await storage.write('transaction_id', existingTxId);
+            await storage.write('order_number', currentOrderNumber); // CRÍTICO: Guardar order_number
           }
           
           isInitializingRef.current = false;
           isCreatingCheckoutRef.current = false;
           return;
         } else {
-          console.warn('⚠️ Could not retrieve payment status from check-debt. Transaction ID may be invalid or expired.');
-          // Continuar para crear un nuevo checkout si no se pudo obtener el estado
+          // Si check-debt falló pero tenemos QR guardado, usar ese QR
+          // IMPORTANTE: Esto es crítico cuando se navega de Thank You a Order Status
+          if (savedQr && savedTxId) {
+            console.log('⚠️ Check-debt failed, but using saved QR from storage (OrderStatus)');
+            console.log('   This is normal when navigating from Thank You to Order Status page');
+            setTransactionId(savedTxId);
+            setQrData(savedQr);
+            setPaymentStatus('pending');
+            // IMPORTANTE: Resetear polling para que se inicie automáticamente
+            setPollingStopped(false);
+            setPollingStartTime(null);
+            // Actualizar timestamp si no existe
+            if (!savedCreatedAt) {
+              await storage.write('qr_created_at', new Date().toISOString());
+            }
+            // Limpiar cualquier mensaje de error previo
+            setErrorMessage('');
+            isInitializingRef.current = false;
+            isCreatingCheckoutRef.current = false;
+            return;
+          }
+          
+          console.warn('⚠️ Could not retrieve payment status from check-debt and no saved QR found. Transaction ID may be invalid or expired.');
+          // Continuar para crear un nuevo checkout si no se pudo obtener el estado y no hay QR guardado
         }
       }
       
@@ -1804,7 +2151,11 @@ function QhantuPaymentValidatorOrderStatus() {
           setQrData(checkoutData.image_data);
           
           // Guardar en storage para persistencia (como string limpio)
+          // CRÍTICO: Guardar también el order_number para verificar que el transaction_id corresponde al pedido correcto
+          const { number: orderNumber, id: orderId } = getOrderIdentifiers();
+          const currentOrderNumber = orderNumber || orderId;
           await storage.write('transaction_id', cleanTransactionId);
+          await storage.write('order_number', currentOrderNumber); // CRÍTICO: Guardar order_number
           await storage.write('qr_image', checkoutData.image_data);
           await storage.write('qr_created_at', new Date().toISOString()); // Guardar timestamp de creación
           
@@ -2055,16 +2406,80 @@ function QhantuPaymentValidatorOrderStatus() {
   }, [isLoading, orderData, totalAmount, cost, missingConfig, paymentStatus, attemptCheckoutCreation, hasRequiredOrderData]);
   
   // Función para verificar el estado del pago
-  const checkPaymentStatus = useCallback(async () => {
+  const checkPaymentStatus = useCallback(async (isManualCheck = false) => {
+    // Si es verificación manual, marcar que el usuario hizo clic
+    if (isManualCheck) {
+      setHasClickedManual(true);
+      setErrorMessage(''); // Limpiar error previo al hacer verificación manual
+    }
+    
+    // Actualizar la ref con la función más reciente
+    checkPaymentStatusRef.current = checkPaymentStatus;
+    
+    // CRÍTICO: Obtener order_number actual para verificar que el transaction_id corresponde a este pedido
+    const { number: orderNumber, id: orderId } = getOrderIdentifiers();
+    const currentOrderNumber = orderNumber || orderId;
+    
     // Obtener transactionId del estado o del storage (priorizar estado actual)
     let txId = transactionId;
     
     // Si no hay transactionId en estado, intentar obtenerlo de storage
+    // PERO SOLO si pertenece al pedido actual
     if (!txId) {
       const savedTxId = await storage.read('transaction_id');
+      const savedOrderNumber = await storage.read('order_number');
+      
+      // CRÍTICO: Solo usar transaction_id del storage si pertenece al pedido actual
       if (savedTxId) {
-        txId = savedTxId;
-        console.log('ℹ️ Transaction ID obtenido de storage (OrderStatus):', txId);
+        if (savedOrderNumber === currentOrderNumber) {
+          txId = savedTxId;
+          console.log('ℹ️ Transaction ID obtenido de storage (OrderStatus):', txId, 'for order:', currentOrderNumber);
+        } else {
+          console.warn('⚠️⚠️⚠️ CRITICAL: Transaction ID in storage belongs to different order! ⚠️⚠️⚠️');
+          console.warn('   Saved order number:', savedOrderNumber);
+          console.warn('   Current order number:', currentOrderNumber);
+          console.warn('   Saved transaction_id:', savedTxId);
+          console.warn('   NOT using saved transaction_id, will get from Shopify order notes...');
+          
+          // Intentar obtener el transaction_id correcto desde Shopify order notes
+          try {
+            const shopDomain = shop?.domain || shop?.myshopifyDomain;
+            if (currentOrderNumber && shopDomain) {
+              const backendApiUrl = formattedSettings.backendApiUrl || 'https://qhantuy-payment-backend.vercel.app';
+              const getQrUrl = `${backendApiUrl.replace(/\/$/, '')}/api/orders/get-qr-from-notes`;
+              
+              const qrResponse = await fetch(getQrUrl, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'X-Shopify-Shop-Domain': shopDomain
+                },
+                body: JSON.stringify({
+                  order_id: orderId,
+                  order_number: orderNumber,
+                  shop: shopDomain
+                })
+              });
+              
+              if (qrResponse.ok) {
+                const qrData = await qrResponse.json();
+                if (qrData.success && qrData.transaction_id) {
+                  txId = qrData.transaction_id;
+                  console.log('✅✅✅ Found correct transaction_id from Shopify order notes! ✅✅✅');
+                  console.log('   Transaction ID:', txId);
+                  console.log('   Order Number:', currentOrderNumber);
+                  
+                  // Actualizar storage con el transaction_id correcto
+                  await storage.write('transaction_id', txId);
+                  await storage.write('order_number', currentOrderNumber);
+                  setTransactionId(txId);
+                }
+              }
+            }
+          } catch (error) {
+            console.warn('⚠️ Could not get transaction_id from Shopify order notes:', error);
+          }
+        }
       }
     }
     
@@ -2130,54 +2545,9 @@ function QhantuPaymentValidatorOrderStatus() {
         }
       }
       
-      // PASO 1: Simular el callback de Qhantuy usando test-callback endpoint
-      // Esto simula que Qhantuy confirmó el pago
-      console.log('🔍 PASO 1: Simulando callback de Qhantuy con transaction_id (OrderStatus):', cleanTxId);
-      
-      const testCallbackUrl = `${formattedSettings.apiUrl.replace(/\/$/, '')}/test-callback`;
-      console.log('Calling test-callback endpoint (OrderStatus):', testCallbackUrl);
-      console.log('Request body (OrderStatus):', { transactionID: cleanTxId });
-      
-      let testCallbackResponse;
-      try {
-        testCallbackResponse = await fetch(testCallbackUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-API-Token': formattedSettings.apiToken || ''
-          },
-          body: JSON.stringify({
-            transactionID: cleanTxId
-          })
-        });
-        
-        if (!testCallbackResponse.ok) {
-          throw new Error(`Test-callback failed: ${testCallbackResponse.status} ${testCallbackResponse.statusText}`);
-        }
-        
-        const testCallbackData = await testCallbackResponse.json();
-        console.log('✅ Test-callback response (OrderStatus):', testCallbackData);
-        
-        // Verificar que el pago fue exitoso (State: "000")
-        if (testCallbackData.State !== '000') {
-          console.warn('⚠️ Test-callback indicates payment not completed (OrderStatus):', testCallbackData.Message);
-          setErrorMessage(`Pago no completado: ${testCallbackData.Message || 'Estado desconocido'}`);
-          setIsChecking(false);
-          return;
-        }
-        
-        console.log('✅ Test-callback confirmó pago exitoso (OrderStatus) (State: 000)');
-        
-      } catch (testCallbackError) {
-        console.error('❌ Error calling test-callback (OrderStatus):', testCallbackError);
-        // Continuar con consulta de deuda aunque falle test-callback (fallback)
-        console.log('ℹ️ Continuando con consulta de deuda como fallback (OrderStatus)...');
-      }
-      
-      // PASO 2: Usar el servicio CONSULTA DE DEUDA para obtener detalles completos
-      // Según documentación: endpoint /check-payments requiere payment_ids (array de transaction IDs)
-      // Enviar transaction_id directamente (preferido) según documentación
-      console.log('🔍 PASO 2: Consultando CONSULTA DE DEUDA con transaction_id (OrderStatus):', cleanTxId, {
+      // Verificar el estado del pago consultando Qhantuy
+      // NO simular callback, solo verificar el estado real del pago
+      console.log('🔍 Verificando estado del pago con transaction_id (OrderStatus):', cleanTxId, {
         orderNumber,
         orderId,
         transactionId: cleanTxId,
@@ -2186,8 +2556,6 @@ function QhantuPaymentValidatorOrderStatus() {
       
       // Normalizar backendApiUrl para evitar URLs duplicadas
       let backendApiUrl = formattedSettings.backendApiUrl;
-      
-      // Limpiar backendApiUrl: remover cualquier path que no sea la base URL
       if (backendApiUrl) {
         try {
           const urlObj = new URL(backendApiUrl);
@@ -2219,6 +2587,26 @@ function QhantuPaymentValidatorOrderStatus() {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Backend error en check-debt (OrderStatus):', response.status, response.statusText, errorText);
+        
+        // Manejar error 429 (Too Many Requests) específicamente
+        if (response.status === 429) {
+          console.warn('⚠️ Rate limit alcanzado (429). Pausando polling temporalmente...');
+          setErrorMessage('Demasiadas solicitudes. Esperando antes de verificar nuevamente... El servidor verificará automáticamente cada 10 minutos.');
+          // Pausar polling por 60 segundos cuando hay 429
+          setPollingStopped(true);
+          // Usar un ref para el timeout para poder limpiarlo si es necesario
+          const timeoutId = setTimeout(() => {
+            console.log('🔄 Reanudando polling después de pausa por 429...');
+            setPollingStopped(false);
+            setPollingStartTime(null); // Resetear para reiniciar intervalos
+            // Limpiar mensaje de error después de reanudar
+            setErrorMessage('');
+          }, 60 * 1000); // Esperar 60 segundos
+          setIsChecking(false);
+          // Guardar el timeout ID para poder limpiarlo si el componente se desmonta
+          return;
+        }
+        
         setErrorMessage('Error al verificar el pago con consulta de deuda. Por favor intenta de nuevo.');
         setIsChecking(false);
         return;
@@ -2230,6 +2618,24 @@ function QhantuPaymentValidatorOrderStatus() {
       // El backend envuelve la respuesta de Qhantuy en { success: true, data: ... }
       if (!backendResponse.success) {
         console.error('Backend returned error en check-debt (OrderStatus):', backendResponse.message || 'Unknown error');
+        
+        // Manejar error 429 (Too Many Requests) específicamente
+        if (backendResponse.status === 429 || backendResponse.message?.includes('429') || backendResponse.message?.includes('Too Many Requests')) {
+          console.warn('⚠️ Rate limit alcanzado (429). Pausando polling temporalmente...');
+          setErrorMessage('Demasiadas solicitudes. Esperando antes de verificar nuevamente... El servidor verificará automáticamente cada 10 minutos.');
+          // Pausar polling por 60 segundos cuando hay 429
+          setPollingStopped(true);
+          // Usar un ref para el timeout para poder limpiarlo si es necesario
+          const timeoutId = setTimeout(() => {
+            console.log('🔄 Reanudando polling después de pausa por 429...');
+            setPollingStopped(false);
+            setPollingStartTime(null); // Resetear para reiniciar intervalos
+            // Limpiar mensaje de error después de reanudar
+            setErrorMessage('');
+          }, 60 * 1000); // Esperar 60 segundos
+          setIsChecking(false);
+          return;
+        }
         
         // Si es un error de Qhantuy, mostrar el mensaje específico
         if (backendResponse.qhantuy_error) {
@@ -2462,26 +2868,71 @@ function QhantuPaymentValidatorOrderStatus() {
     }
   }, [transactionId, isChecking, getOrderIdentifiers, shop, formattedSettings, storage]);
   
+  // Actualizar la ref cuando checkPaymentStatus cambia
+  useEffect(() => {
+    checkPaymentStatusRef.current = checkPaymentStatus;
+  }, [checkPaymentStatus]);
+
   // Polling automático: verificar el estado del pago con intervalos dinámicos
-  // - Primeros 2 minutos: cada 5 segundos
-  // - Después (hasta 5 minutos): cada 30 segundos
+  // - Primeros 2 minutos: cada 15 segundos
+  // - Después (hasta 5 minutos): cada 45 segundos
   // - Después de 5 minutos: el backend hace verificaciones cada 10 minutos
   useEffect(() => {
+    // CRÍTICO: Verificar primero si ya hay un polling activo ANTES de hacer cualquier cosa
+    // Usar una verificación más estricta con doble check
+    if (isPollingActiveRef.current) {
+      if (pollingIntervalRef.current) {
+        console.log('🚫 Polling ya está activo (interval exists), ignorando nueva ejecución del useEffect (OrderStatus)');
+        return;
+      } else {
+        // Si el flag está activo pero no hay intervalo, resetear el flag (puede ser un estado inconsistente)
+        console.log('⚠️ Polling flag activo pero sin intervalo, reseteando flag (OrderStatus)');
+        isPollingActiveRef.current = false;
+      }
+    }
+    
     // Solo hacer polling si:
     // 1. El estado es 'pending' (pago pendiente)
     // 2. Tenemos un transactionId
     // 3. No estamos verificando actualmente
     // 4. El polling no ha sido detenido
     if (paymentStatus !== 'pending' || !transactionId || isChecking || pollingStopped) {
+      // Si no debemos hacer polling, limpiar cualquier intervalo existente
+      if (pollingIntervalRef.current) {
+        console.log('🧹 Limpiando intervalo porque condiciones no se cumplen (OrderStatus)');
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (pollingMaxTimeoutRef.current) {
+        clearTimeout(pollingMaxTimeoutRef.current);
+        pollingMaxTimeoutRef.current = null;
+      }
+      isPollingActiveRef.current = false;
       return;
     }
+    
+    // CRÍTICO: Establecer el flag ANTES de cualquier operación async para prevenir race conditions
+    // Esto previene que múltiples ejecuciones del useEffect pasen este punto simultáneamente
+    isPollingActiveRef.current = true;
+    
+    // CRÍTICO: Limpiar cualquier intervalo anterior antes de crear uno nuevo
+    if (pollingIntervalRef.current) {
+      console.log('🧹 Limpiando intervalo de polling anterior (OrderStatus)');
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    if (pollingMaxTimeoutRef.current) {
+      clearTimeout(pollingMaxTimeoutRef.current);
+      pollingMaxTimeoutRef.current = null;
+    }
+    
+    // Marcar que el polling está activo ANTES de crear el intervalo
+    isPollingActiveRef.current = true;
 
     // Intervalos según el tiempo transcurrido
-    const FAST_INTERVAL = 5 * 1000; // 5 segundos para los primeros 2 minutos
-    const SLOW_INTERVAL = 30 * 1000; // 30 segundos después de 2 minutos
-    const FAST_PHASE_DURATION = 2 * 60 * 1000; // 2 minutos
-    const SLOW_PHASE_DURATION = 5 * 60 * 1000; // 5 minutos total
-    const TOTAL_POLLING_DURATION = SLOW_PHASE_DURATION; // 5 minutos total
+    // Revisar cada 15 segundos durante los 5 minutos completos
+    const POLLING_INTERVAL = 15 * 1000; // 15 segundos = 15000 milisegundos
+    const TOTAL_POLLING_DURATION = 5 * 60 * 1000; // 5 minutos = 300000 milisegundos
 
     // Guardar tiempo de inicio si es la primera vez
     if (!pollingStartTime) {
@@ -2489,80 +2940,77 @@ function QhantuPaymentValidatorOrderStatus() {
     }
 
     console.log('🔄 Iniciando polling automático (OrderStatus):');
-    console.log('   - Primeros 2 minutos: cada 5 segundos');
-    console.log('   - Después (hasta 5 minutos): cada 30 segundos');
+    console.log('   - Durante 5 minutos: cada 15 segundos (15000 ms)');
     console.log('   - Después de 5 minutos: el backend verificará cada 10 minutos');
+    console.log('   - Intervalo: ' + POLLING_INTERVAL + 'ms');
 
     let pollingAttempts = 0;
-    let currentInterval = FAST_INTERVAL;
-    let intervalId = null;
-
-    // Función para determinar el intervalo actual según el tiempo transcurrido
-    const getCurrentInterval = (elapsed) => {
-      if (elapsed < FAST_PHASE_DURATION) {
-        return FAST_INTERVAL; // Primeros 2 minutos: cada 5 segundos
-      } else if (elapsed < SLOW_PHASE_DURATION) {
-        return SLOW_INTERVAL; // Después: cada 30 segundos hasta 5 minutos
-      }
-      return null; // Después de 5 minutos, el backend se encarga
-    };
 
     // Función para ejecutar la verificación
     const executeCheck = () => {
+      // Verificar que aún debemos hacer polling
+      if (paymentStatus !== 'pending' || !transactionId || isChecking || pollingStopped) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        return;
+      }
+      
       pollingAttempts++;
       const elapsed = Date.now() - (pollingStartTime || Date.now());
       
       // Detener si hemos alcanzado el tiempo máximo (5 minutos)
       if (elapsed >= TOTAL_POLLING_DURATION) {
         console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (OrderStatus).');
-        if (intervalId) {
-          clearInterval(intervalId);
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
         }
         setPollingStopped(true);
         return;
       }
 
-      // Verificar si necesitamos cambiar el intervalo
-      const newInterval = getCurrentInterval(elapsed);
-      if (newInterval && newInterval !== currentInterval) {
-        console.log(`🔄 Cambiando intervalo de polling: ${currentInterval / 1000}s -> ${newInterval / 1000}s (OrderStatus)`);
-        currentInterval = newInterval;
-        if (intervalId) {
-          clearInterval(intervalId);
-        }
-        // Reiniciar el intervalo con el nuevo valor
-        intervalId = setInterval(executeCheck, currentInterval);
+      console.log(`🔄 Polling automático [15s] (${pollingAttempts}) (OrderStatus): verificando estado del pago...`);
+      // Usar la ref para acceder a la función más reciente sin causar re-renders
+      if (checkPaymentStatusRef.current) {
+        checkPaymentStatusRef.current();
       }
-
-      const phase = elapsed < FAST_PHASE_DURATION ? 'FAST (5s)' : 'SLOW (30s)';
-      console.log(`🔄 Polling automático [${phase}] (${pollingAttempts}) (OrderStatus): verificando estado del pago...`);
-      checkPaymentStatus();
     };
 
-    // Iniciar con el intervalo rápido
-    currentInterval = FAST_INTERVAL;
-    intervalId = setInterval(executeCheck, currentInterval);
+    // Iniciar con el intervalo de 15 segundos
+    pollingIntervalRef.current = setInterval(executeCheck, POLLING_INTERVAL);
 
-    // Ejecutar primera verificación inmediatamente
-    executeCheck();
+    // CRÍTICO: NO ejecutar executeCheck() inmediatamente aquí
+    // Esto causaba múltiples ejecuciones casi simultáneas
+    // El intervalo se ejecutará automáticamente después del primer intervalo (15 segundos)
+    // Si necesitas una verificación inmediata, hazla fuera del useEffect o con un setTimeout separado
+    console.log('⏱️ Polling iniciado. Primera verificación en 15 segundos (OrderStatus)');
 
     // Timeout máximo: dejar de verificar después de 5 minutos
-    const maxTimeout = setTimeout(() => {
+    pollingMaxTimeoutRef.current = setTimeout(() => {
       console.log('⏱️ Tiempo máximo de polling automático alcanzado (5 minutos). El backend verificará cada 10 minutos (OrderStatus).');
-      if (intervalId) {
-        clearInterval(intervalId);
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
       setPollingStopped(true);
     }, TOTAL_POLLING_DURATION);
 
     // Cleanup al desmontar o cambiar estado
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
+      console.log('🧹 Cleanup: Limpiando intervalos de polling (OrderStatus)');
+      isPollingActiveRef.current = false;
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
       }
-      clearTimeout(maxTimeout);
+      if (pollingMaxTimeoutRef.current) {
+        clearTimeout(pollingMaxTimeoutRef.current);
+        pollingMaxTimeoutRef.current = null;
+      }
     };
-  }, [paymentStatus, transactionId, isChecking, pollingStopped, pollingStartTime, checkPaymentStatus]);
+  }, [paymentStatus, transactionId, isChecking, pollingStopped]); // Removido checkPaymentStatus y pollingStartTime de dependencias
 
   // Resetear polling cuando el estado cambia de 'pending'
   useEffect(() => {
@@ -2681,14 +3129,23 @@ function QhantuPaymentValidatorOrderStatus() {
             </BlockStack>
           </Banner>
 
-          {/* Botón de verificación manual - MOVIDO ARRIBA */}
+          {qrData && (
+            <BlockStack spacing="base" inlineAlignment="center">
+              <Image source={qrData} alt="Código QR de Pago" />
+              <Text size="small" appearance="subdued">
+                Transacción: {transactionId}
+              </Text>
+            </BlockStack>
+          )}
+
+          {/* Botón de verificación manual - Debajo del QR */}
           {pollingStopped && (
             <>
-              <Button onPress={checkPaymentStatus} disabled={isChecking}>
+              <Button onPress={() => checkPaymentStatus(true)} disabled={isChecking}>
                 {isChecking ? '🔄 Verificando...' : '🔍 Avisar y verificar el pago realizado'}
               </Button>
-              {/* Mostrar feedback después de verificar */}
-              {errorMessage && !isChecking && (
+              {/* Mostrar feedback SOLO después de que el usuario haya hecho clic manualmente */}
+              {errorMessage && !isChecking && hasClickedManual && (
                 <Banner status="critical">
                   <BlockStack spacing="tight">
                     <Text emphasis="bold">⚠️ Pago aún no confirmado</Text>
@@ -2700,15 +3157,6 @@ function QhantuPaymentValidatorOrderStatus() {
                 </Banner>
               )}
             </>
-          )}
-
-          {qrData && (
-            <BlockStack spacing="base" inlineAlignment="center">
-              <Image source={qrData} alt="Código QR de Pago" />
-              <Text size="small" appearance="subdued">
-                Transacción: {transactionId}
-              </Text>
-            </BlockStack>
           )}
 
           <Banner status="info">
@@ -2736,10 +3184,10 @@ function QhantuPaymentValidatorOrderStatus() {
             <Banner status="info">
               <BlockStack spacing="tight">
                 <Text size="small">
-                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas 2 horas.
+                  💡 El servidor continuará verificando automáticamente cada 10 minutos durante las próximas {formattedSettings.qrValidityHours || 2} horas.
                 </Text>
                 <Text size="small" appearance="subdued">
-                  Si ya completaste el pago, puedes usar el botón de arriba para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
+                  Si ya completaste el pago, puedes usar el botón de abajo para verificar manualmente o esperar a que el servidor lo detecte automáticamente.
                 </Text>
               </BlockStack>
             </Banner>
@@ -2752,7 +3200,7 @@ function QhantuPaymentValidatorOrderStatus() {
                   💡 La verificación automática está activa. Se detendrá después de 5 minutos.
                 </Text>
                 <Text size="small">
-                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas 2 horas.
+                  Si el pago toma más tiempo, el servidor verificará automáticamente cada 10 minutos durante las próximas {formattedSettings.qrValidityHours || 2} horas.
                 </Text>
                 <Text size="small">
                   Puedes recargar esta página en cualquier momento. Si ya pagaste, haz clic en "Avisar y verificar" cuando aparezca el botón.

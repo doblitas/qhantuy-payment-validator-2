@@ -1,3 +1,5 @@
+// IMPORTANTE: Importar primero para suprimir warnings de deprecación
+import '../suppress-deprecation-warnings.js';
 import { checkDebtStatus } from '../../web/backend/api.js';
 
 /**
@@ -83,7 +85,8 @@ export default async function handler(req, res) {
         detail,
         callback_url,
         return_url,
-        items
+        items,
+        qr_validity_hours = 2 // Horas de validez del QR (default: 2)
       } = req.body;
 
       // Validar campos requeridos
@@ -348,7 +351,8 @@ export default async function handler(req, res) {
                 internal_code: internal_code,
                 shop_domain: shopDomain,
                 order_number: orderNumber,
-                created_at: new Date().toISOString()
+                created_at: new Date().toISOString(),
+                qr_validity_hours: qr_validity_hours || 2 // Horas de validez del QR
               });
               
               console.log('✅ Pending order stored for periodic check:', {
